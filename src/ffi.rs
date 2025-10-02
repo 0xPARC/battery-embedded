@@ -7,7 +7,7 @@ use p3_field::PrimeField32;
 use rand::SeedableRng;
 use rand_chacha::ChaCha20Rng;
 
-// Concrete production parameters (set as needed for your build)
+// Concrete production parameters
 pub const TFHE_TRLWE_N: usize = 1024;
 const Q: u64 = 1 << 50;
 const ERR_B: i64 = 1 << 30;
