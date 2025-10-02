@@ -1,0 +1,43 @@
+[package]
+name = "tfhe_enc"
+version = "0.1.0"
+edition = "2024"
+description = "Minimal no_std TFHE TRLWE public-key encryption"
+
+[lib]
+path = "src/lib.rs"
+crate-type = ["lib", "staticlib"]
+
+[features]
+default = ["std"]        # std by default
+std = []                 # enables std
+alloc = ["dep:dlmalloc"] # for no_std + alloc -> bring in dlmalloc
+ffi = ["alloc"]          # C FFI bindings
+
+[profile.release]
+panic = "abort"
+
+[dependencies]
+rand_chacha = { version = "0.9", default-features = false }
+rand = { version = "0.9", default-features = false }
+aes = { version = "0.8.4", default-features = false }
+ctr = "0.9.2"
+p3-air = "0.3.0"
+p3-challenger = "0.3.0"
+p3-commit = "0.3.0"
+p3-dft = "0.3.0"
+p3-field = "0.3.0"
+p3-fri = "0.3.0"
+p3-keccak = "0.3.0"
+p3-koala-bear = "0.3.0"
+p3-matrix = "0.3.0"
+p3-merkle-tree = "0.3.0"
+p3-poseidon2 = "0.3.0"
+p3-poseidon2-air = "0.3.0"
+p3-symmetric = "0.3.0"
+p3-uni-stark = "0.3.0"
+dlmalloc = { version = "0.2", default-features = false, features = ["global"], optional = true }
+postcard = { version = "1", default-features = false, features = ["alloc"] }
+
+[build-dependencies]
+cbindgen = "0.29"

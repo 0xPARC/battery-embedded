@@ -1,0 +1,6 @@
+/target
+
+# C example build artifacts
+/examples/ffi_c/e2e
+/examples/ffi_c/*.o
+
