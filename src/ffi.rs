@@ -11,7 +11,7 @@ use rand_chacha::ChaCha20Rng;
 // Public constants for FFI
 pub const TFHE_TRLWE_N: usize = 1024;
 const Q: u64 = 1 << 50;
-const ERR_B: u64 = 1 << 30;
+const ERR_B: u64 = 1 << 12;
 
 // Unified FFI status and size constants (project‑wide)
 pub const BATTERY_OK: i32 = 0;
