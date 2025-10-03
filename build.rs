@@ -3,11 +3,11 @@ fn main() {
     println!("cargo:rerun-if-changed=cbindgen.toml");
     println!("cargo:rerun-if-changed=src");
 
-    // Generate C header with cbindgen into include/tfhe_enc.h
+    // Generate C header with cbindgen into include/battery.h
     let crate_dir = std::env::var("CARGO_MANIFEST_DIR").unwrap();
     let out_dir = std::path::Path::new(&crate_dir).join("include");
     std::fs::create_dir_all(&out_dir).unwrap();
-    let header_path = out_dir.join("tfhe_enc.h");
+    let header_path = out_dir.join("battery.h");
 
     match cbindgen::generate(&crate_dir) {
         Ok(builder) => {

@@ -1,8 +1,8 @@
 [package]
-name = "tfhe_enc"
+name = "battery_embedded"
 version = "0.1.0"
 edition = "2024"
-description = "Minimal no_std TFHE TRLWE public-key encryption"
+description = "Minimal no_std TFHE TRLWE public-key encryption and ZKP library"
 
 [lib]
 path = "src/lib.rs"

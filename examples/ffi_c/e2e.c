@@ -2,8 +2,8 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include "tfhe_enc.h"
-#include "tfhe_enc_helpers.h"
+#include "battery.h"
+#include "battery_helpers.h"
 
 int main(void) {
     // ZKP: generate public values (e.g., Merkle root)  and zk proof for a provided leaf & path
@@ -33,7 +33,7 @@ int main(void) {
                             sizeof proof_buf,
                             &proof_written);
     if (rc != TFHE_OK) {
-        fprintf(stderr, "zkp_generate_proof failed: %s (%d)\n", tfhe_strerror(rc), rc);
+        fprintf(stderr, "zkp_generate_proof failed: %s (%d)\n", battery_strerror(rc), rc);
         return 1;
     }
     printf("[info] ZKP public root[0..7]: ");
@@ -74,7 +74,7 @@ int main(void) {
     printf("[info] Encrypting AES key with TFHE PK...\n");
     rc = tfhe_pk_encrypt_aes_key(a_out, b_out, pk_a, pk_b, aes_key, seed, TFHE_SEED_LEN);
     if (rc != TFHE_OK) {
-        fprintf(stderr, "tfhe_pk_encrypt_aes_key failed: %s (%d)\n", tfhe_strerror(rc), rc);
+        fprintf(stderr, "tfhe_pk_encrypt_aes_key failed: %s (%d)\n", battery_strerror(rc), rc);
         return 1;
     }
     printf("[info] ct.a[0..7]: ");

@@ -70,6 +70,33 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c08606f8c3cbf4ce6ec8e28fb0014a2c086708fe954eaa885384a6165172e7e8"
 
 [[package]]
+name = "battery_embedded"
+version = "0.1.0"
+dependencies = [
+ "aes",
+ "cbindgen",
+ "ctr",
+ "dlmalloc",
+ "p3-air",
+ "p3-challenger",
+ "p3-commit",
+ "p3-dft",
+ "p3-field",
+ "p3-fri",
+ "p3-keccak",
+ "p3-koala-bear",
+ "p3-matrix",
+ "p3-merkle-tree",
+ "p3-poseidon2",
+ "p3-poseidon2-air",
+ "p3-symmetric",
+ "p3-uni-stark",
+ "postcard",
+ "rand",
+ "rand_chacha",
+]
+
+[[package]]
 name = "bitflags"
 version = "2.9.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -830,33 +857,6 @@ dependencies = [
  "once_cell",
  "rustix",
  "windows-sys 0.61.1",
-]
-
-[[package]]
-name = "tfhe_enc"
-version = "0.1.0"
-dependencies = [
- "aes",
- "cbindgen",
- "ctr",
- "dlmalloc",
- "p3-air",
- "p3-challenger",
- "p3-commit",
- "p3-dft",
- "p3-field",
- "p3-fri",
- "p3-keccak",
- "p3-koala-bear",
- "p3-matrix",
- "p3-merkle-tree",
- "p3-poseidon2",
- "p3-poseidon2-air",
- "p3-symmetric",
- "p3-uni-stark",
- "postcard",
- "rand",
- "rand_chacha",
 ]
 
 [[package]]

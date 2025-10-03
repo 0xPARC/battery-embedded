@@ -1,12 +1,12 @@
-#ifndef TFHE_ENC_HELPERS_H
-#define TFHE_ENC_HELPERS_H
+#ifndef BATTERY_HELPERS_H
+#define BATTERY_HELPERS_H
 
 #include <stdint.h>
 #include <stddef.h>
-#include "tfhe_enc.h"
+#include "battery.h"
 
-// Map TFHE status codes to strings for logging
-static inline const char* tfhe_strerror(int code) {
+// Map BATTERY status codes to strings for logging
+static inline const char* battery_strerror(int code) {
     switch (code) {
         case TFHE_OK: return "TFHE_OK";
         case TFHE_ERR_NULL: return "TFHE_ERR_NULL";
@@ -24,4 +24,4 @@ static inline int tfhe_is_aligned_u64(const void* p) {
     return (((uintptr_t)p) & (sizeof(uint64_t) - 1)) == 0;
 }
 
-#endif // TFHE_ENC_HELPERS_H
+#endif // BATTERY_HELPERS_H

@@ -6,7 +6,7 @@ RUST_TARGET_dev-gnu  := aarch64-unknown-linux-gnu
 RUST_TARGET_dev-musl := aarch64-unknown-linux-musl
 RUST_TARGET := $(RUST_TARGET_$(PLATFORM))
 
-RUST_LIB := ../../target/$(RUST_TARGET)/release/libtfhe_enc.a
+RUST_LIB := ../../target/$(RUST_TARGET)/release/libbattery_embedded.a
 INCLUDE  := ../../include
 C_SRC    := e2e.c
 OUT      := e2e

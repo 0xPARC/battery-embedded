@@ -30,8 +30,21 @@ fn is_aligned_u64(p: *const u64) -> bool {
     (p as usize) & (core::mem::align_of::<u64>() - 1) == 0
 }
 
+#[inline]
+fn encode_aes_key_as_poly<const N: usize, const Q: u64>(key16: &[u8; 16]) -> TRLWEPlaintext<N, Q> {
+    let one: u64 = Q / 4;
+
+    let mut out = TRLWEPlaintext::<N, Q>::zero();
+    let limit = core::cmp::min(N, key16.len() * 8);
+    for i in 0..limit {
+        let b = (key16[i >> 3] >> (i & 7)) & 1;
+        out.coeffs[i] = if b != 0 { one } else { 0 };
+    }
+    out
+}
+
 // Encrypt an AES-128 key directly. Encodes each bit of the 16-byte key into the first
-// 128 coefficients of the plaintext polynomial as 0 -> 0, 1 -> Q/2; remaining coeffs zero.
+// 128 coefficients of the plaintext polynomial as 0 -> 0, 1 -> Q/4; remaining coeffs zero.
 // Writes output ciphertext into (a_out, b_out).
 // Returns TFHE_OK on success, or TFHE_ERR_* on error.
 #[unsafe(no_mangle)]
@@ -80,23 +93,9 @@ pub extern "C" fn tfhe_pk_encrypt_aes_key(
     };
 
     // Encode AES key bits into plaintext poly
-    let key = unsafe { core::slice::from_raw_parts(aes_key16, TFHE_AES_KEY_LEN) };
-    let mut pt_poly = TRLWEPlaintext::<TFHE_TRLWE_N, Q>::zero();
-    let half_q: u64 = Q / 2;
-    let mut idx = 0usize;
-    for byte in key.iter() {
-        for bit in 0..8 {
-            if idx >= TFHE_TRLWE_N {
-                break;
-            }
-            let b = (byte >> bit) & 1;
-            pt_poly.coeffs[idx] = if b != 0 { half_q } else { 0 };
-            idx += 1;
-        }
-        if idx >= TFHE_TRLWE_N {
-            break;
-        }
-    }
+    let key = unsafe { &*(aes_key16 as *const [u8; TFHE_AES_KEY_LEN]) };
+
+    let pt_poly = encode_aes_key_as_poly::<TFHE_TRLWE_N, Q>(key);
 
     let ct = TRLWECiphertext::<TFHE_TRLWE_N, Q>::encrypt_with_public_key::<_, ERR_B>(
         &pt_poly, &pk, &mut rng,
