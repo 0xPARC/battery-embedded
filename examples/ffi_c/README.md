@@ -10,7 +10,7 @@ This example demonstrates how to use the generated C bindings to call the TFHE p
    $ make
    $ ./e2e
 
-- Build the example for running it on the device (requires `zig`!)
+- Build the example for running it on a different platform (requires `zig`!)
 
    $ cd examples/ffi_c
    $ make PLATFORM=dev-musl
