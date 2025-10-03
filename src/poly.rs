@@ -156,6 +156,25 @@ impl<const N: usize, const Q: u64> Poly<N, Q> {
     #[inline]
     pub fn mul_negacyclic(&self, other: &Self) -> Self {
         let mut out = [0u64; N];
+        // Specialized path for power-of-two N: single loop with bitmask wrap
+        if (N & (N - 1)) == 0 {
+            let mask = N - 1;
+            for i in 0..N {
+                let ai = self.coeffs[i];
+                for j in 0..N {
+                    let prod = mul_mod_u64(ai, other.coeffs[j], Q);
+                    let sum = i + j;
+                    let k = sum & mask;
+                    if sum < N {
+                        out[k] = add_mod_u64(out[k], prod, Q);
+                    } else {
+                        out[k] = sub_mod_u64(out[k], prod, Q);
+                    }
+                }
+            }
+            return Poly { coeffs: out };
+        }
+        // General path
         for i in 0..N {
             let ai = self.coeffs[i];
             let limit = N - i; // indices where i + j < N → add
@@ -196,5 +215,78 @@ impl<const N: usize, const Q: u64> Poly<N, Q> {
             };
         }
         Poly { coeffs: out }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn add_sub_roundtrip() {
+        const N: usize = 8;
+        const Q: u64 = 256;
+        let mut a = Poly::<N, Q>::zero();
+        let mut b = Poly::<N, Q>::zero();
+        for i in 0..N {
+            a.coeffs[i] = (i as u64 * 10) % Q;
+            b.coeffs[i] = (i as u64 * 3 + 7) % Q;
+        }
+        let mut c = a.clone();
+        c.add_assign(&b);
+        c.sub_assign(&b);
+        for i in 0..N {
+            assert_eq!(c.coeffs[i], a.coeffs[i]);
+        }
+    }
+
+    fn mul_negacyclic_naive<const N: usize, const Q: u64>(a: &Poly<N, Q>, b: &Poly<N, Q>) -> Poly<N, Q> {
+        let mut out = [0u64; N];
+        for i in 0..N {
+            for j in 0..N {
+                let prod = ((a.coeffs[i] as u128 * b.coeffs[j] as u128) % Q as u128) as u64;
+                let sum = i + j;
+                if sum < N {
+                    out[sum] = super::add_mod_u64(out[sum], prod, Q);
+                } else {
+                    out[sum - N] = super::sub_mod_u64(out[sum - N], prod, Q);
+                }
+            }
+        }
+        Poly { coeffs: out }
+    }
+
+    #[test]
+    fn mul_negacyclic_matches_naive_power_of_two() {
+        const N: usize = 8; // power of two to hit specialization
+        const Q: u64 = 256;
+        let mut a = Poly::<N, Q>::zero();
+        let mut b = Poly::<N, Q>::zero();
+        for i in 0..N {
+            a.coeffs[i] = (i as u64 * 5 + 1) % Q;
+            b.coeffs[i] = (i as u64 * 7 + 2) % Q;
+        }
+        let got = a.mul_negacyclic(&b);
+        let exp = mul_negacyclic_naive(&a, &b);
+        for i in 0..N {
+            assert_eq!(got.coeffs[i], exp.coeffs[i]);
+        }
+    }
+
+    #[test]
+    fn mul_negacyclic_matches_naive_non_power_of_two() {
+        const N: usize = 6; // general path
+        const Q: u64 = 1009; // prime to exercise non-2^k path
+        let mut a = Poly::<N, Q>::zero();
+        let mut b = Poly::<N, Q>::zero();
+        for i in 0..N {
+            a.coeffs[i] = (i as u64 * 9 + 3) % Q;
+            b.coeffs[i] = (i as u64 * 4 + 5) % Q;
+        }
+        let got = a.mul_negacyclic(&b);
+        let exp = mul_negacyclic_naive(&a, &b);
+        for i in 0..N {
+            assert_eq!(got.coeffs[i], exp.coeffs[i]);
+        }
     }
 }

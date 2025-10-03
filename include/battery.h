@@ -17,17 +17,17 @@
 
 #define TFHE_TRLWE_N 1024
 
-#define TFHE_OK 0
+#define BATTERY_OK 0
 
-#define TFHE_ERR_NULL -1
+#define BATTERY_ERR_NULL -1
 
-#define TFHE_ERR_BADLEN -2
+#define BATTERY_ERR_BADLEN -2
 
-#define TFHE_ERR_SEEDLEN -6
+#define BATTERY_ERR_SEEDLEN -6
 
-#define TFHE_ERR_ZKP_INPUT -8
+#define BATTERY_ERR_INPUT -8
 
-#define TFHE_ERR_ZKP_BUFSZ -10
+#define BATTERY_ERR_BUFSZ -10
 
 #define TFHE_SEED_LEN 32
 
@@ -40,12 +40,12 @@ void rust_eh_personality(void);
 /**
  * Encrypt an AES-128 key using an opaque serialized public key.
  * Inputs:
- * - `pk`/`pk_len`: postcard-serialized `TFHEPublicKey` for N=1024, Q=2^50.
+ * - `pk`/`pk_len`: postcard-serialized `TFHEPublicKey` for current params.
  * - `aes_key16` (len=16)
  * - `seed32` (len=32)
  * Outputs:
  * - `ct_out`/`ct_out_len`: caller-provided buffer for postcard-serialized `TRLWECiphertext`.
- * - `out_written`: number of bytes written. If too small, returns `TFHE_ERR_ZKP_BUFSZ`.
+ * - `out_written`: number of bytes written. If too small, returns `BATTERY_ERR_BUFSZ`.
  */
 int32_t tfhe_pk_encrypt_aes_key(const uint8_t *pk,
                                 size_t pk_len,
@@ -63,7 +63,7 @@ int32_t tfhe_pk_encrypt_aes_key(const uint8_t *pk,
  * - `nonce32` (len=32)
  * Outputs:
  * - `proof_out`/`proof_out_len`: caller-provided buffer for postcard-serialized proof.
- * - `out_proof_written`: number of bytes written. If too small, returns `TFHE_ERR_ZKP_BUFSZ`.
+ * - `out_proof_written`: number of bytes written. If too small, returns `BATTERY_ERR_BUFSZ`.
  */
 int32_t zkp_generate_proof(const uint8_t *args,
                            size_t args_len,

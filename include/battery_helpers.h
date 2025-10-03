@@ -8,13 +8,13 @@
 // Map BATTERY status codes to strings for logging
 static inline const char* battery_strerror(int code) {
     switch (code) {
-        case TFHE_OK: return "TFHE_OK";
-        case TFHE_ERR_NULL: return "TFHE_ERR_NULL";
-        case TFHE_ERR_BADLEN: return "TFHE_ERR_BADLEN";
-        case TFHE_ERR_SEEDLEN: return "TFHE_ERR_SEEDLEN";
-        case TFHE_ERR_ZKP_INPUT: return "TFHE_ERR_ZKP_INPUT";
-        case TFHE_ERR_ZKP_BUFSZ: return "TFHE_ERR_ZKP_BUFSZ";
-        default: return "TFHE_ERR_UNKNOWN";
+        case BATTERY_OK: return "BATTERY_OK";
+        case BATTERY_ERR_NULL: return "BATTERY_ERR_NULL";
+        case BATTERY_ERR_BADLEN: return "BATTERY_ERR_BADLEN";
+        case BATTERY_ERR_SEEDLEN: return "BATTERY_ERR_SEEDLEN";
+        case BATTERY_ERR_INPUT: return "BATTERY_ERR_INPUT";
+        case BATTERY_ERR_BUFSZ: return "BATTERY_ERR_BUFSZ";
+        default: return "BATTERY_ERR_UNKNOWN";
     }
 }
 

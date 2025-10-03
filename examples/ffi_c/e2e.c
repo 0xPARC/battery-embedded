@@ -75,7 +75,7 @@ int main(void) {
                            args_buf,
                            sizeof args_buf,
                            &args_len);
-    if (rc != TFHE_OK) {
+    if (rc != BATTERY_OK) {
         fprintf(stderr, "zkp_pack_args failed: %s (%d)\n", battery_strerror(rc), rc);
         return 1;
     }
@@ -89,7 +89,7 @@ int main(void) {
                             proof_buf,
                             sizeof proof_buf,
                             &proof_written);
-    if (rc != TFHE_OK) {
+    if (rc != BATTERY_OK) {
         fprintf(stderr, "zkp_generate_proof failed: %s (%d)\n", battery_strerror(rc), rc);
         return 1;
     }
@@ -122,7 +122,7 @@ int main(void) {
     unsigned char pk_buf[1<<18];
     size_t pk_len = 0;
     rc = tfhe_pack_public_key(pk_a, pk_b, pk_buf, sizeof pk_buf, &pk_len);
-    if (rc != TFHE_OK) {
+    if (rc != BATTERY_OK) {
         fprintf(stderr, "tfhe_pack_public_key failed: %s (%d)\n", battery_strerror(rc), rc);
         return 1;
     }
@@ -141,7 +141,7 @@ int main(void) {
     printf("[info] Encrypting AES key with TFHE PK...\n");
     rc = tfhe_pk_encrypt_aes_key(pk_buf, pk_len, aes_key, seed, TFHE_SEED_LEN,
                                  ct_buf, sizeof ct_buf, &ct_written);
-    if (rc != TFHE_OK) {
+    if (rc != BATTERY_OK) {
         fprintf(stderr, "tfhe_pk_encrypt_aes_key failed: %s (%d)\n", battery_strerror(rc), rc);
         return 1;
     }
@@ -158,7 +158,7 @@ int main(void) {
     printf("\n[info] AES-CTR plaintext[0..15]: ");
     for (int i = 0; i < 16; i++) printf("%02x", data[i]);
     printf("\n[info] Encrypting with AES-CTR...\n");
-    if (aes_ctr_encrypt(data, sizeof(data), aes_key, TFHE_AES_KEY_LEN, iv, TFHE_AES_IV_LEN) != TFHE_OK) {
+    if (aes_ctr_encrypt(data, sizeof(data), aes_key, TFHE_AES_KEY_LEN, iv, TFHE_AES_IV_LEN) != BATTERY_OK) {
         fprintf(stderr, "aes_ctr_encrypt failed\n");
         return 1;
     }
