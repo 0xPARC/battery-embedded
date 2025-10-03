@@ -1,6 +1,7 @@
 use super::Vec;
 use crate::aes_ctr::aes_ctr_encrypt_in_place;
-use crate::tfhe::{Poly, TFHEPublicKey, TRLWECiphertext, TRLWEPlaintext};
+use crate::poly::Poly;
+use crate::tfhe::{TFHEPublicKey, TRLWECiphertext, TRLWEPlaintext};
 use crate::zkp::{self, Val};
 use p3_field::integers::QuotientMap;
 use p3_field::PrimeField32;
