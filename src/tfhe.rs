@@ -24,15 +24,13 @@ impl<const N: usize, const Q: u64> TFHESecretKey<N, Q> {
     }
 }
 
-#[derive(Clone)]
-#[cfg_attr(feature = "ffi", derive(serde::Serialize, serde::Deserialize))]
+#[derive(Clone, serde::Serialize, serde::Deserialize)]
 pub struct TRLWECiphertext<const N: usize, const Q: u64> {
     pub a: Poly<N, Q>,
     pub b: Poly<N, Q>,
 }
 
-#[derive(Clone)]
-#[cfg_attr(feature = "ffi", derive(serde::Serialize, serde::Deserialize))]
+#[derive(Clone, serde::Serialize, serde::Deserialize)]
 pub struct TFHEPublicKey<const N: usize, const Q: u64> {
     pub ct: TRLWECiphertext<N, Q>,
 }
@@ -47,7 +45,7 @@ impl<const N: usize, const Q: u64> TRLWECiphertext<N, Q> {
     }
 
     #[inline]
-    pub fn encrypt_with_public_key<R: Rng, const B: i64>(
+    pub fn encrypt_with_public_key<R: Rng, const B: u64>(
         pt: &TRLWEPlaintext<N, Q>,
         pk: &TFHEPublicKey<N, Q>,
         rng: &mut R,
@@ -68,7 +66,7 @@ impl<const N: usize, const Q: u64> TRLWECiphertext<N, Q> {
 
 impl<const N: usize, const Q: u64> TFHEPublicKey<N, Q> {
     #[cfg(test)]
-    pub fn from_secret_key<R: Rng, const B: i64>(sk: &TFHESecretKey<N, Q>, rng: &mut R) -> Self {
+    pub fn from_secret_key<R: Rng, const B: u64>(sk: &TFHESecretKey<N, Q>, rng: &mut R) -> Self {
         let a = Poly::<N, Q>::uniform(rng);
         let e = Poly::<N, Q>::error::<R, B>(rng);
         let as_prod = a.mul_negacyclic(&sk.s);
@@ -85,7 +83,7 @@ impl<const N: usize, const Q: u64> TFHEPublicKey<N, Q> {
 /// Encode an arbitrary bitstring into a TRLWE plaintext: 1 -> Q/4, 0 -> 0.
 /// Bits are read LSB-first within each byte. Encodes up to `min(N, bit_len)` bits.
 #[inline]
-pub(crate) fn encode_bits_as_trlwe_plaintext<const N: usize, const Q: u64>(
+pub fn encode_bits_as_trlwe_plaintext<const N: usize, const Q: u64>(
     bytes: &[u8],
     bit_len: usize,
 ) -> TRLWEPlaintext<N, Q> {
@@ -138,7 +136,7 @@ mod tests {
     fn pk_encrypt_zero_sanity() {
         const N: usize = 32;
         const Q: u64 = 1_000_000_000;
-        const B: i64 = 10;
+        const B: u64 = 10;
         let mut rng = ChaCha20Rng::from_seed([1u8; 32]);
         let sk = TFHESecretKey::<N, Q>::generate(&mut rng);
         let pk = TFHEPublicKey::<N, Q>::from_secret_key::<_, B>(&sk, &mut rng);
@@ -171,7 +169,7 @@ mod tests {
     fn pk_encrypt_plaintext_decrypts_with_small_error() {
         const N: usize = 64;
         const Q: u64 = 4_000_000_000;
-        const B: i64 = 10;
+        const B: u64 = 10;
         let mut rng = ChaCha20Rng::from_seed([2u8; 32]);
         let sk = TFHESecretKey::<N, Q>::generate(&mut rng);
         let pk = TFHEPublicKey::<N, Q>::from_secret_key::<_, B>(&sk, &mut rng);

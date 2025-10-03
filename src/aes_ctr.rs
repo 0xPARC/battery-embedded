@@ -1,6 +1,5 @@
 use aes::cipher::{KeyIvInit, StreamCipher};
 
-
 type Aes128Ctr = ctr::Ctr128BE<aes::Aes128>;
 
 pub type AesKey = [u8; 16];

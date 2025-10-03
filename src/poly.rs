@@ -35,60 +35,10 @@ fn mul_mod_u64(x: u64, y: u64, q: u64) -> u64 {
 
 // ---------------- Polynomial over Z/QZ[X]/(X^N+1) ----------------
 
-#[derive(Clone)]
+#[derive(Clone, serde::Serialize, serde::Deserialize)]
 pub struct Poly<const N: usize, const Q: u64> {
+    #[serde(with = "serde_big_array::BigArray")]
     pub coeffs: [u64; N],
-}
-
-// Serde for Poly<N, Q>: serialize as a sequence of N u64s.
-// Enabled under the `ffi` feature since opaque FFI uses postcard.
-#[cfg(feature = "ffi")]
-impl<const N: usize, const Q: u64> serde::Serialize for Poly<N, Q> {
-    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
-    where
-        S: serde::Serializer,
-    {
-        use serde::ser::SerializeSeq;
-        let mut seq = serializer.serialize_seq(Some(N))?;
-        for i in 0..N {
-            seq.serialize_element(&self.coeffs[i])?;
-        }
-        seq.end()
-    }
-}
-
-#[cfg(feature = "ffi")]
-impl<'de, const N: usize, const Q: u64> serde::Deserialize<'de> for Poly<N, Q> {
-    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
-    where
-        D: serde::Deserializer<'de>,
-    {
-        struct PolyVisitor<const N: usize, const Q: u64>;
-        impl<'de, const N: usize, const Q: u64> serde::de::Visitor<'de> for PolyVisitor<N, Q> {
-            type Value = Poly<N, Q>;
-            fn expecting(&self, f: &mut core::fmt::Formatter) -> core::fmt::Result {
-                write!(f, "sequence of {} u64 coefficients", N)
-            }
-            fn visit_seq<A>(self, mut seq: A) -> Result<Self::Value, A::Error>
-            where
-                A: serde::de::SeqAccess<'de>,
-            {
-                let mut coeffs = [0u64; N];
-                for i in 0..N {
-                    coeffs[i] = match seq.next_element::<u64>()? {
-                        Some(v) => v,
-                        None => return Err(serde::de::Error::invalid_length(i, &self)),
-                    };
-                }
-                // Ensure there are no extra elements
-                if let Some(_) = seq.next_element::<serde::de::IgnoredAny>()? {
-                    return Err(serde::de::Error::custom("too many coefficients"));
-                }
-                Ok(Poly { coeffs })
-            }
-        }
-        deserializer.deserialize_seq(PolyVisitor::<N, Q>)
-    }
 }
 
 impl<const N: usize, const Q: u64> Poly<N, Q> {
@@ -204,10 +154,11 @@ impl<const N: usize, const Q: u64> Poly<N, Q> {
     }
 
     #[inline]
-    pub fn error<R: Rng, const B: i64>(rng: &mut R) -> Self {
+    pub fn error<R: Rng, const B: u64>(rng: &mut R) -> Self {
         let mut out = [0u64; N];
+        let b128: i128 = B as i128;
         for i in 0..N {
-            let e: i64 = rng.random_range(-B..=B);
+            let e: i128 = rng.random_range(-b128..=b128);
             out[i] = if e >= 0 {
                 e as u64
             } else {
@@ -240,7 +191,10 @@ mod tests {
         }
     }
 
-    fn mul_negacyclic_naive<const N: usize, const Q: u64>(a: &Poly<N, Q>, b: &Poly<N, Q>) -> Poly<N, Q> {
+    fn mul_negacyclic_naive<const N: usize, const Q: u64>(
+        a: &Poly<N, Q>,
+        b: &Poly<N, Q>,
+    ) -> Poly<N, Q> {
         let mut out = [0u64; N];
         for i in 0..N {
             for j in 0..N {

@@ -29,23 +29,31 @@
 
 #define BATTERY_ERR_BUFSZ -10
 
-#define TFHE_SEED_LEN 32
+#define BATTERY_SEED_LEN 32
 
-#define TFHE_AES_KEY_LEN 16
+#define BATTERY_NONCE_LEN 32
 
-#define TFHE_AES_IV_LEN 16
+#define AES_KEY_LEN 16
+
+#define AES_IV_LEN 16
+
+#define BATTERY_API_VERSION 1
 
 void rust_eh_personality(void);
+
+uint32_t battery_api_version(void);
 
 /**
  * Encrypt an AES-128 key using an opaque serialized public key.
  * Inputs:
  * - `pk`/`pk_len`: postcard-serialized `TFHEPublicKey` for current params.
- * - `aes_key16` (len=16)
- * - `seed32` (len=32)
+ * - `aes_key16` (len=`AES_KEY_LEN`)
+ * - `seed32` (len=`BATTERY_SEED_LEN`)
  * Outputs:
  * - `ct_out`/`ct_out_len`: caller-provided buffer for postcard-serialized `TRLWECiphertext`.
  * - `out_written`: number of bytes written. If too small, returns `BATTERY_ERR_BUFSZ`.
+ *
+ * Serialization: postcard 1.x (stable).
  */
 int32_t tfhe_pk_encrypt_aes_key(const uint8_t *pk,
                                 size_t pk_len,
@@ -60,10 +68,12 @@ int32_t tfhe_pk_encrypt_aes_key(const uint8_t *pk,
  * Generate a Merkle-path ZK proof using a single opaque serialized argument, with a separate nonce.
  * Inputs:
  * - `args`/`args_len`: postcard-serialized OpaqueMerklePathArgs
- * - `nonce32` (len=32)
+ * - `nonce32` (len=`BATTERY_NONCE_LEN`)
  * Outputs:
  * - `proof_out`/`proof_out_len`: caller-provided buffer for postcard-serialized proof.
  * - `out_proof_written`: number of bytes written. If too small, returns `BATTERY_ERR_BUFSZ`.
+ *
+ * Serialization: postcard 1.x (stable).
  */
 int32_t zkp_generate_proof(const uint8_t *args,
                            size_t args_len,
@@ -81,6 +91,7 @@ int32_t aes_ctr_encrypt(uint8_t *buf,
 
 /**
  * Pack a TFHE public key from `u64[N]` arrays into a postcard-serialized opaque buffer.
+ * Serialization: postcard 1.x (stable).
  */
 int32_t tfhe_pack_public_key(const uint64_t *pk_a,
                              const uint64_t *pk_b,
@@ -90,6 +101,7 @@ int32_t tfhe_pack_public_key(const uint64_t *pk_a,
 
 /**
  * Pack Merkle path arguments into a postcard-serialized opaque buffer.
+ * Serialization: postcard 1.x (stable).
  */
 int32_t zkp_pack_args(const uint32_t *leaf8_u32,
                       const uint32_t *neighbors8_by_level_u32,
