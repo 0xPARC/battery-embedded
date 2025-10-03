@@ -6,12 +6,12 @@ use core::mem::MaybeUninit;
 
 use p3_air::{Air, AirBuilder, AirBuilderWithPublicValues, BaseAir};
 use p3_field::{Field, PrimeCharacteristicRing, PrimeField};
-use p3_matrix::dense::RowMajorMatrix;
 use p3_matrix::Matrix;
+use p3_matrix::dense::RowMajorMatrix;
 use p3_poseidon2::GenericPoseidon2LinearLayers;
 use p3_poseidon2_air::{FullRound, PartialRound, Poseidon2Cols, SBox};
 
-use super::{constants::RoundConstants, generation::generate_trace_rows_for_perm, Vec, HASH_SIZE};
+use super::{HASH_SIZE, Vec, constants::RoundConstants, generation::generate_trace_rows_for_perm};
 
 const HASH_SIZE_2: usize = 2 * HASH_SIZE;
 const HASH_OFFSET: usize = HASH_SIZE_2 + 1;
@@ -29,13 +29,13 @@ pub struct MerkleInclusionAir<
 }
 
 impl<
-        F: Field,
-        LinearLayers: Sync,
-        const SBOX_DEGREE: u64,
-        const SBOX_REGISTERS: usize,
-        const HALF_FULL_ROUNDS: usize,
-        const PARTIAL_ROUNDS: usize,
-    > BaseAir<F>
+    F: Field,
+    LinearLayers: Sync,
+    const SBOX_DEGREE: u64,
+    const SBOX_REGISTERS: usize,
+    const HALF_FULL_ROUNDS: usize,
+    const PARTIAL_ROUNDS: usize,
+> BaseAir<F>
     for MerkleInclusionAir<
         F,
         LinearLayers,
@@ -58,13 +58,13 @@ impl<
 }
 
 impl<
-        F: PrimeField,
-        LinearLayers: GenericPoseidon2LinearLayers<F, WIDTH>,
-        const SBOX_DEGREE: u64,
-        const SBOX_REGISTERS: usize,
-        const HALF_FULL_ROUNDS: usize,
-        const PARTIAL_ROUNDS: usize,
-    >
+    F: PrimeField,
+    LinearLayers: GenericPoseidon2LinearLayers<F, WIDTH>,
+    const SBOX_DEGREE: u64,
+    const SBOX_REGISTERS: usize,
+    const HALF_FULL_ROUNDS: usize,
+    const PARTIAL_ROUNDS: usize,
+>
     MerkleInclusionAir<
         F,
         LinearLayers,
@@ -138,13 +138,13 @@ impl<
 }
 
 impl<
-        AB: AirBuilderWithPublicValues,
-        LinearLayers: GenericPoseidon2LinearLayers<AB::Expr, WIDTH>,
-        const SBOX_DEGREE: u64,
-        const SBOX_REGISTERS: usize,
-        const HALF_FULL_ROUNDS: usize,
-        const PARTIAL_ROUNDS: usize,
-    > Air<AB>
+    AB: AirBuilderWithPublicValues,
+    LinearLayers: GenericPoseidon2LinearLayers<AB::Expr, WIDTH>,
+    const SBOX_DEGREE: u64,
+    const SBOX_REGISTERS: usize,
+    const HALF_FULL_ROUNDS: usize,
+    const PARTIAL_ROUNDS: usize,
+> Air<AB>
     for MerkleInclusionAir<
         AB::F,
         LinearLayers,
