@@ -17,14 +17,19 @@ include = [
   "TFHE_OK",
   "TFHE_ERR_NULL",
   "TFHE_ERR_BADLEN",
-  "TFHE_ERR_ALIGN",
+  "TFHE_ERR_ZKP_BUFSZ",
   "TFHE_ERR_SEEDLEN",
   "TFHE_ERR_ZKP_INPUT",
-  "TFHE_ERR_ZKP_BUFSZ",
   "TFHE_SEED_LEN",
   "TFHE_AES_KEY_LEN",
   "TFHE_AES_IV_LEN",
   "tfhe_pk_encrypt_aes_key",
+  "tfhe_pack_public_key",
   "aes_ctr_encrypt",
   "zkp_generate_proof",
+  "zkp_pack_args",
+]
+exclude = [
+  "tfhe_pk_encrypt_aes_key_legacy",
+  "zkp_generate_proof_legacy",
 ]

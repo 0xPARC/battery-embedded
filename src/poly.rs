@@ -40,6 +40,57 @@ pub struct Poly<const N: usize, const Q: u64> {
     pub coeffs: [u64; N],
 }
 
+// Serde for Poly<N, Q>: serialize as a sequence of N u64s.
+// Enabled under the `ffi` feature since opaque FFI uses postcard.
+#[cfg(feature = "ffi")]
+impl<const N: usize, const Q: u64> serde::Serialize for Poly<N, Q> {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        use serde::ser::SerializeSeq;
+        let mut seq = serializer.serialize_seq(Some(N))?;
+        for i in 0..N {
+            seq.serialize_element(&self.coeffs[i])?;
+        }
+        seq.end()
+    }
+}
+
+#[cfg(feature = "ffi")]
+impl<'de, const N: usize, const Q: u64> serde::Deserialize<'de> for Poly<N, Q> {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        struct PolyVisitor<const N: usize, const Q: u64>;
+        impl<'de, const N: usize, const Q: u64> serde::de::Visitor<'de> for PolyVisitor<N, Q> {
+            type Value = Poly<N, Q>;
+            fn expecting(&self, f: &mut core::fmt::Formatter) -> core::fmt::Result {
+                write!(f, "sequence of {} u64 coefficients", N)
+            }
+            fn visit_seq<A>(self, mut seq: A) -> Result<Self::Value, A::Error>
+            where
+                A: serde::de::SeqAccess<'de>,
+            {
+                let mut coeffs = [0u64; N];
+                for i in 0..N {
+                    coeffs[i] = match seq.next_element::<u64>()? {
+                        Some(v) => v,
+                        None => return Err(serde::de::Error::invalid_length(i, &self)),
+                    };
+                }
+                // Ensure there are no extra elements
+                if let Some(_) = seq.next_element::<serde::de::IgnoredAny>()? {
+                    return Err(serde::de::Error::custom("too many coefficients"));
+                }
+                Ok(Poly { coeffs })
+            }
+        }
+        deserializer.deserialize_seq(PolyVisitor::<N, Q>)
+    }
+}
+
 impl<const N: usize, const Q: u64> Poly<N, Q> {
     #[inline]
     pub const fn zero() -> Self {

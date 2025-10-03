@@ -23,8 +23,6 @@
 
 #define TFHE_ERR_BADLEN -2
 
-#define TFHE_ERR_ALIGN -4
-
 #define TFHE_ERR_SEEDLEN -6
 
 #define TFHE_ERR_ZKP_INPUT -8
@@ -39,13 +37,40 @@
 
 void rust_eh_personality(void);
 
-int32_t tfhe_pk_encrypt_aes_key(uint64_t *a_out,
-                                uint64_t *b_out,
-                                const uint64_t *pk_a,
-                                const uint64_t *pk_b,
+/**
+ * Encrypt an AES-128 key using an opaque serialized public key.
+ * Inputs:
+ * - `pk`/`pk_len`: postcard-serialized `TFHEPublicKey` for N=1024, Q=2^50.
+ * - `aes_key16` (len=16)
+ * - `seed32` (len=32)
+ * Outputs:
+ * - `ct_out`/`ct_out_len`: caller-provided buffer for postcard-serialized `TRLWECiphertext`.
+ * - `out_written`: number of bytes written. If too small, returns `TFHE_ERR_ZKP_BUFSZ`.
+ */
+int32_t tfhe_pk_encrypt_aes_key(const uint8_t *pk,
+                                size_t pk_len,
                                 const uint8_t *aes_key16,
                                 const uint8_t *seed32,
-                                size_t seed_len);
+                                size_t seed_len,
+                                uint8_t *ct_out,
+                                size_t ct_out_len,
+                                size_t *out_written);
+
+/**
+ * Generate a Merkle-path ZK proof using a single opaque serialized argument, with a separate nonce.
+ * Inputs:
+ * - `args`/`args_len`: postcard-serialized OpaqueMerklePathArgs
+ * - `nonce32` (len=32)
+ * Outputs:
+ * - `proof_out`/`proof_out_len`: caller-provided buffer for postcard-serialized proof.
+ * - `out_proof_written`: number of bytes written. If too small, returns `TFHE_ERR_ZKP_BUFSZ`.
+ */
+int32_t zkp_generate_proof(const uint8_t *args,
+                           size_t args_len,
+                           const uint8_t *nonce32,
+                           uint8_t *proof_out,
+                           size_t proof_out_len,
+                           size_t *out_proof_written);
 
 int32_t aes_ctr_encrypt(uint8_t *buf,
                         size_t len,
@@ -55,38 +80,23 @@ int32_t aes_ctr_encrypt(uint8_t *buf,
                         size_t iv_len);
 
 /**
- * Generate a zk proof and public values for a Merkle-style hash path.
- *
- * Inputs:
- * - `leaf8_u32` (len=8): the leaf as 8 canonical field elements (u32). Each must map to a
- *   valid KoalaBear field element; otherwise returns `TFHE_ERR_ZKP_INPUT`.
- * - `neighbors8_by_level_u32` (len=`levels * 8`): neighbors for each level laid out row‑major,
- *   i.e., level `l` occupies indices `[l*8 .. l*8+8)`. Each u32 must be canonical.
- * - `sides_bitflags` (len=`levels`): per‑level position of the neighbor.
- *   0 means neighbor on the right (concatenate [current || neighbor]);
- *   1 means neighbor on the left (concatenate [neighbor || current]).
- *   Only 0 or 1 are accepted; any other value returns `TFHE_ERR_ZKP_INPUT`.
- *   Additionally, `sides[0]` MUST be 0 to enforce proof uniqueness; if not, returns `TFHE_ERR_ZKP_INPUT`.
- * - `levels`: Merkle depth (e.g., 32 in production). Must be > 0.
- * - `nonce32` (len=32): seed used in Fiat–Shamir; different nonces produce different proofs for
- *   the same inputs but the same public root.
- *
- * Outputs:
- * - `out_root8_u32` (len=8): the 8 canonical field elements of the resulting root.
- * - `proof_out`/`proof_out_len`: postcard‑serialized proof is written here. If the buffer is
- *   too small, returns `TFHE_ERR_ZKP_BUFSZ` and leaves `out_proof_written` set to required size.
- * - `out_proof_written`: number of bytes written (or required if buffer too small).
- *
- * Returns `TFHE_OK` on success, `TFHE_ERR_*` on invalid inputs or serialization failure.
+ * Pack a TFHE public key from `u64[N]` arrays into a postcard-serialized opaque buffer.
  */
-int32_t zkp_generate_proof(const uint32_t *leaf8_u32,
-                           const uint32_t *neighbors8_by_level_u32,
-                           const uint8_t *sides_bitflags,
-                           size_t levels,
-                           const uint8_t *nonce32,
-                           uint32_t *out_root8_u32,
-                           uint8_t *proof_out,
-                           size_t proof_out_len,
-                           size_t *out_proof_written);
+int32_t tfhe_pack_public_key(const uint64_t *pk_a,
+                             const uint64_t *pk_b,
+                             uint8_t *out,
+                             size_t out_len,
+                             size_t *out_written);
+
+/**
+ * Pack Merkle path arguments into a postcard-serialized opaque buffer.
+ */
+int32_t zkp_pack_args(const uint32_t *leaf8_u32,
+                      const uint32_t *neighbors8_by_level_u32,
+                      const uint8_t *sides_bitflags,
+                      size_t levels,
+                      uint8_t *out,
+                      size_t out_len,
+                      size_t *out_written);
 
 #endif  /* BATTERY_H */

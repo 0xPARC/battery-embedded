@@ -25,12 +25,14 @@ impl<const N: usize, const Q: u64> TFHESecretKey<N, Q> {
 }
 
 #[derive(Clone)]
+#[cfg_attr(feature = "ffi", derive(serde::Serialize, serde::Deserialize))]
 pub struct TRLWECiphertext<const N: usize, const Q: u64> {
     pub a: Poly<N, Q>,
     pub b: Poly<N, Q>,
 }
 
 #[derive(Clone)]
+#[cfg_attr(feature = "ffi", derive(serde::Serialize, serde::Deserialize))]
 pub struct TFHEPublicKey<const N: usize, const Q: u64> {
     pub ct: TRLWECiphertext<N, Q>,
 }

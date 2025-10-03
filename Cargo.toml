@@ -38,6 +38,7 @@ p3-symmetric = "0.3.0"
 p3-uni-stark = "0.3.0"
 dlmalloc = { version = "0.2", default-features = false, features = ["global"], optional = true }
 postcard = { version = "1", default-features = false, features = ["alloc"] }
+serde = { version = "1", default-features = false, features = ["derive"] }
 
 [build-dependencies]
 cbindgen = "0.29"
