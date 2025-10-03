@@ -1,35 +1,54 @@
 use rand::Rng;
 
-// ---------------- Modular arithmetic helpers (u64, arbitrary Q) ----------------
+// ---------------- Modular arithmetic helpers ----------------
 
+// Const-generic helpers over fixed modulus Q
 #[inline(always)]
-fn add_mod_u64(x: u64, y: u64, q: u64) -> u64 {
-    debug_assert!(q > 0);
-    if q.is_power_of_two() {
-        (x.wrapping_add(y)) & (q - 1)
+const fn qmask<const Q: u64>() -> u64 {
+    if Q.is_power_of_two() {
+        Q - 1
     } else {
-        (((x as u128) + (y as u128)) % (q as u128)) as u64
+        0
     }
 }
 
 #[inline(always)]
-pub fn sub_mod_u64(x: u64, y: u64, q: u64) -> u64 {
-    debug_assert!(q > 0);
-    if q.is_power_of_two() {
-        (x.wrapping_sub(y)) & (q - 1)
+fn add_mod<const Q: u64>(x: u64, y: u64) -> u64 {
+    debug_assert!(Q > 0);
+    if Q.is_power_of_two() {
+        x.wrapping_add(y) & qmask::<Q>()
     } else {
-        // (x - y) mod q  ==  (x + q - y) mod q
-        (((x as u128) + (q as u128) - (y as u128)) % (q as u128)) as u64
+        (((x as u128) + (y as u128)) % (Q as u128)) as u64
     }
 }
 
 #[inline(always)]
-fn mul_mod_u64(x: u64, y: u64, q: u64) -> u64 {
-    debug_assert!(q > 0);
-    if q.is_power_of_two() {
-        (x.wrapping_mul(y)) & (q - 1)
+pub(crate) fn sub_mod<const Q: u64>(x: u64, y: u64) -> u64 {
+    debug_assert!(Q > 0);
+    if Q.is_power_of_two() {
+        x.wrapping_sub(y) & qmask::<Q>()
     } else {
-        ((x as u128 * y as u128) % (q as u128)) as u64
+        // (x - y) mod Q == (x + Q - y) mod Q
+        (((x as u128) + (Q as u128) - (y as u128)) % (Q as u128)) as u64
+    }
+}
+
+#[inline(always)]
+fn mul_mod<const Q: u64>(x: u64, y: u64) -> u64 {
+    debug_assert!(Q > 0);
+    if Q.is_power_of_two() {
+        x.wrapping_mul(y) & qmask::<Q>()
+    } else {
+        (((x as u128) * (y as u128)) % (Q as u128)) as u64
+    }
+}
+
+#[inline(always)]
+fn reduce<const Q: u64>(x: u64) -> u64 {
+    if Q.is_power_of_two() {
+        x & qmask::<Q>()
+    } else {
+        x % Q
     }
 }
 
@@ -56,15 +75,8 @@ impl<const N: usize, const Q: u64> Poly<N, Q> {
     #[inline]
     pub fn from_coeffs_mod_q_array(input: &[u64; N]) -> Self {
         let mut out = [0u64; N];
-        if Q.is_power_of_two() {
-            let mask = Q - 1;
-            for i in 0..N {
-                out[i] = input[i] & mask;
-            }
-        } else {
-            for i in 0..N {
-                out[i] = input[i] % Q;
-            }
+        for i in 0..N {
+            out[i] = reduce::<Q>(input[i]);
         }
         Poly { coeffs: out }
     }
@@ -75,15 +87,8 @@ impl<const N: usize, const Q: u64> Poly<N, Q> {
     pub fn from_coeffs_mod_q_slice(input: &[u64]) -> Self {
         debug_assert!(input.len() == N);
         let mut out = [0u64; N];
-        if Q.is_power_of_two() {
-            let mask = Q - 1;
-            for i in 0..N {
-                out[i] = input[i] & mask;
-            }
-        } else {
-            for i in 0..N {
-                out[i] = input[i] % Q;
-            }
+        for i in 0..N {
+            out[i] = reduce::<Q>(input[i]);
         }
         Poly { coeffs: out }
     }
@@ -91,14 +96,14 @@ impl<const N: usize, const Q: u64> Poly<N, Q> {
     #[inline]
     pub fn add_assign(&mut self, other: &Self) {
         for i in 0..N {
-            self.coeffs[i] = add_mod_u64(self.coeffs[i], other.coeffs[i], Q);
+            self.coeffs[i] = add_mod::<Q>(self.coeffs[i], other.coeffs[i]);
         }
     }
 
     #[inline]
     pub fn sub_assign(&mut self, other: &Self) {
         for i in 0..N {
-            self.coeffs[i] = sub_mod_u64(self.coeffs[i], other.coeffs[i], Q);
+            self.coeffs[i] = sub_mod::<Q>(self.coeffs[i], other.coeffs[i]);
         }
     }
 
@@ -108,17 +113,16 @@ impl<const N: usize, const Q: u64> Poly<N, Q> {
         let mut out = [0u64; N];
         // Specialized path for power-of-two N: single loop with bitmask wrap
         if (N & (N - 1)) == 0 {
-            let mask = N - 1;
+            let m = N - 1;
             for i in 0..N {
                 let ai = self.coeffs[i];
                 for j in 0..N {
-                    let prod = mul_mod_u64(ai, other.coeffs[j], Q);
                     let sum = i + j;
-                    let k = sum & mask;
+                    let k = sum & m;
                     if sum < N {
-                        out[k] = add_mod_u64(out[k], prod, Q);
+                        out[k] = add_mod::<Q>(out[k], mul_mod::<Q>(ai, other.coeffs[j]));
                     } else {
-                        out[k] = sub_mod_u64(out[k], prod, Q);
+                        out[k] = sub_mod::<Q>(out[k], mul_mod::<Q>(ai, other.coeffs[j]));
                     }
                 }
             }
@@ -127,17 +131,15 @@ impl<const N: usize, const Q: u64> Poly<N, Q> {
         // General path
         for i in 0..N {
             let ai = self.coeffs[i];
-            let limit = N - i; // indices where i + j < N → add
-            for j in 0..limit {
-                let prod = mul_mod_u64(ai, other.coeffs[j], Q);
+            let lim = N - i; // indices where i + j < N → add
+            for j in 0..lim {
                 let k = i + j;
-                out[k] = add_mod_u64(out[k], prod, Q);
+                out[k] = add_mod::<Q>(out[k], mul_mod::<Q>(ai, other.coeffs[j]));
             }
-            for j in limit..N {
+            for j in lim..N {
                 // wrap-around subtract
-                let prod = mul_mod_u64(ai, other.coeffs[j], Q);
                 let k = i + j - N;
-                out[k] = sub_mod_u64(out[k], prod, Q);
+                out[k] = sub_mod::<Q>(out[k], mul_mod::<Q>(ai, other.coeffs[j]));
             }
         }
         Poly { coeffs: out }
@@ -162,7 +164,7 @@ impl<const N: usize, const Q: u64> Poly<N, Q> {
             out[i] = if e >= 0 {
                 e as u64
             } else {
-                sub_mod_u64(0, (-e) as u64, Q)
+                sub_mod::<Q>(0, (-e) as u64)
             };
         }
         Poly { coeffs: out }
@@ -198,12 +200,12 @@ mod tests {
         let mut out = [0u64; N];
         for i in 0..N {
             for j in 0..N {
-                let prod = ((a.coeffs[i] as u128 * b.coeffs[j] as u128) % Q as u128) as u64;
+                let prod = super::mul_mod::<Q>(a.coeffs[i], b.coeffs[j]);
                 let sum = i + j;
                 if sum < N {
-                    out[sum] = super::add_mod_u64(out[sum], prod, Q);
+                    out[sum] = super::add_mod::<Q>(out[sum], prod);
                 } else {
-                    out[sum - N] = super::sub_mod_u64(out[sum - N], prod, Q);
+                    out[sum - N] = super::sub_mod::<Q>(out[sum - N], prod);
                 }
             }
         }

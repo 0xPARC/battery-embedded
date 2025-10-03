@@ -102,7 +102,7 @@ pub fn encode_bits_as_trlwe_plaintext<const N: usize, const Q: u64>(
 
 #[cfg(test)]
 mod tests {
-    use crate::poly::sub_mod_u64;
+    use crate::poly::sub_mod;
 
     use super::*;
     use rand::SeedableRng;
@@ -184,7 +184,7 @@ mod tests {
 
         let mut max_abs: i128 = 0;
         for i in 0..N {
-            let diff = sub_mod_u64(m.coeffs[i], pt.coeffs[i], Q);
+            let diff = sub_mod::<Q>(m.coeffs[i], pt.coeffs[i]);
             let centered = if diff > Q / 2 {
                 (diff as i128) - (Q as i128)
             } else {
