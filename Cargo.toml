@@ -3,6 +3,7 @@ name = "battery_embedded"
 version = "0.1.0"
 edition = "2024"
 description = "Minimal no_std TFHE TRLWE public-key encryption and ZKP library"
+authors = ["Dan Gulotta (@dgulotta)", "V (@vdrg)"]
 
 [lib]
 path = "src/lib.rs"

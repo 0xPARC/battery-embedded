@@ -1,3 +1,5 @@
+// Adapted from Plonky3 (https://github.com/Plonky3/Plonky3)
+
 use p3_field::Field;
 use rand::Rng;
 use rand::distr::{Distribution, StandardUniform};

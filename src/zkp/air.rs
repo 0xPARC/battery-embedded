@@ -192,6 +192,7 @@ impl<
     }
 }
 
+// Adapted from Plonky3 (https://github.com/Plonky3/Plonky3)
 fn eval_poseidon2<
     AB: AirBuilder,
     LinearLayers: GenericPoseidon2LinearLayers<AB::Expr, WIDTH>,

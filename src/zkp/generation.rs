@@ -1,3 +1,5 @@
+// Adapted from Plonky3 (https://github.com/Plonky3/Plonky3)
+
 use core::mem::MaybeUninit;
 
 use p3_field::PrimeField;
