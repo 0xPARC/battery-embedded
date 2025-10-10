@@ -176,8 +176,9 @@ pub extern "C" fn zkp_generate_proof(
     }
     let (proof, public_values) = zkp::generate_proof(&leaf, &neighbors, &nonce_arr);
     // Convert public values to portable u32 form.
-    let mut publics_arr = [0u32; zkp::PUB_TOTAL_SIZE];
-    for i in 0..zkp::PUB_TOTAL_SIZE {
+    const PUBLICS_WORDS: usize = 3 * 8; // 3 * HASH_SIZE (internal)
+    let mut publics_arr = [0u32; PUBLICS_WORDS];
+    for i in 0..PUBLICS_WORDS {
         publics_arr[i] = public_values[i].as_canonical_u32();
     }
     // Serialize tuple (proof, publics_u32) directly via postcard.
@@ -476,16 +477,16 @@ mod tests {
         assert_eq!(rc3, BATTERY_OK);
 
         // Decode both blobs, ignoring the proof type, extracting publics only.
-        let (_skip1, publics1): (IgnoredAny, [u32; zkp::PUB_TOTAL_SIZE]) =
+        const PUBLICS_WORDS: usize = 3 * 8;
+        let (_skip1, publics1): (IgnoredAny, [u32; PUBLICS_WORDS]) =
             from_bytes(&out1[..out1_written]).unwrap();
-        let (_skip2, publics2): (IgnoredAny, [u32; zkp::PUB_TOTAL_SIZE]) =
+        let (_skip2, publics2): (IgnoredAny, [u32; PUBLICS_WORDS]) =
             from_bytes(&out2[..out2_written]).unwrap();
 
         // H stable
-        assert_eq!(&publics1[zkp::PUB_ROOT_SIZE..zkp::PUB_ROOT_SIZE + zkp::PUB_COMMIT_SIZE],
-                   &publics2[zkp::PUB_ROOT_SIZE..zkp::PUB_ROOT_SIZE + zkp::PUB_COMMIT_SIZE]);
+        assert_eq!(&publics1[8..16], &publics2[8..16]);
         // Roots likely differ for different neighbor values
-        assert_ne!(&publics1[0..zkp::PUB_ROOT_SIZE], &publics2[0..zkp::PUB_ROOT_SIZE]);
+        assert_ne!(&publics1[0..8], &publics2[0..8]);
     }
 
     #[test]
@@ -534,11 +535,11 @@ mod tests {
             ),
             BATTERY_OK
         );
-        let (_skip1, publics1): (IgnoredAny, [u32; zkp::PUB_TOTAL_SIZE]) =
+        const PUBLICS_WORDS2: usize = 3 * 8;
+        let (_skip1, publics1): (IgnoredAny, [u32; PUBLICS_WORDS2]) =
             from_bytes(&out1[..w1]).unwrap();
-        let (_skip2, publics2): (IgnoredAny, [u32; zkp::PUB_TOTAL_SIZE]) =
+        let (_skip2, publics2): (IgnoredAny, [u32; PUBLICS_WORDS2]) =
             from_bytes(&out2[..w2]).unwrap();
-        assert_ne!(&publics1[zkp::PUB_ROOT_SIZE..zkp::PUB_ROOT_SIZE + zkp::PUB_COMMIT_SIZE],
-                   &publics2[zkp::PUB_ROOT_SIZE..zkp::PUB_ROOT_SIZE + zkp::PUB_COMMIT_SIZE]);
+        assert_ne!(&publics1[8..16], &publics2[8..16]);
     }
 }

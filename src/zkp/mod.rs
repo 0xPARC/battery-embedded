@@ -23,13 +23,9 @@ pub mod air;
 pub mod constants;
 pub mod generation;
 
-pub const WIDTH: usize = 16;
-pub const HASH_SIZE: usize = 8;
-// Public-values layout: [root(8) | H(8) | nonce(8)]
-pub const PUB_ROOT_SIZE: usize = HASH_SIZE;
-pub const PUB_COMMIT_SIZE: usize = HASH_SIZE;
-pub const PUB_NONCE_SIZE: usize = HASH_SIZE;
-pub const PUB_TOTAL_SIZE: usize = PUB_ROOT_SIZE + PUB_COMMIT_SIZE + PUB_NONCE_SIZE; // 24
+pub(super) const WIDTH: usize = 16;
+pub(super) const HASH_SIZE: usize = 8;
+// Public-values layout (internal): [root(8) | H(8) | nonce(8)]
 
 // BabyBear parameters
 // BabyBear seems to use about 5% more memory than KoalaBear
@@ -131,9 +127,9 @@ pub fn generate_proof(
     let root_start = cols - poseidon_cols - WIDTH; // end of merkle block minus WIDTH
     let h_start = cols - WIDTH; // end of commit block minus WIDTH
 
-    let mut public_values = Vec::with_capacity(PUB_TOTAL_SIZE);
-    public_values.extend_from_slice(&last_row[root_start..root_start + PUB_ROOT_SIZE]);
-    public_values.extend_from_slice(&last_row[h_start..h_start + PUB_COMMIT_SIZE]);
+    let mut public_values = Vec::with_capacity(3 * HASH_SIZE);
+    public_values.extend_from_slice(&last_row[root_start..root_start + HASH_SIZE]);
+    public_values.extend_from_slice(&last_row[h_start..h_start + HASH_SIZE]);
     public_values.extend_from_slice(&nonce_f);
 
     let dft = Dft::default();
@@ -192,9 +188,9 @@ pub fn verify_proof(
 
     let config = MyConfig::new(pcs, challenger);
 
-    // Overwrite the nonce slice in public values with the verifier's nonce binding.
+    // Overwrite the nonce slice in public values with the verifier's nonce binding when length matches exactly.
     let mut pv = public_values.clone();
-    if pv.len() >= PUB_TOTAL_SIZE {
+    if pv.len() == 3 * HASH_SIZE {
         let mut nonce_f = [Val::from_canonical_checked(0).unwrap(); HASH_SIZE];
         for i in 0..HASH_SIZE {
             let base = i * 4;
@@ -206,7 +202,7 @@ pub fn verify_proof(
             ]);
             nonce_f[i] = Val::from_canonical_checked(word).unwrap();
         }
-        let start = PUB_ROOT_SIZE + PUB_COMMIT_SIZE; // nonce slice offset
+        let start = 2 * HASH_SIZE; // nonce slice offset
         for i in 0..HASH_SIZE {
             pv[start + i] = nonce_f[i];
         }
@@ -219,7 +215,7 @@ pub fn verify_proof(
 mod test {
     use p3_field::integers::QuotientMap;
 
-    use super::{Val, generate_proof, verify_proof, HASH_SIZE, PUB_ROOT_SIZE, PUB_COMMIT_SIZE, PUB_NONCE_SIZE};
+    use super::{Val, generate_proof, verify_proof, HASH_SIZE};
 
     #[test]
     fn test_root_independent_of_nonce() {
@@ -251,8 +247,8 @@ mod test {
         let nonce = [42u8; 32];
         let (proof, mut publics) = generate_proof(&leaf, &neighbors, &nonce);
         // Corrupt the published nonce slice; verifier should ignore and still accept using its argument.
-        for i in 0..PUB_NONCE_SIZE {
-            publics[PUB_ROOT_SIZE + PUB_COMMIT_SIZE + i] = Val::from_canonical_checked(123456u32 + i as u32).unwrap();
+        for i in 0..HASH_SIZE {
+            publics[2 * HASH_SIZE + i] = Val::from_canonical_checked(123456u32 + i as u32).unwrap();
         }
         assert!(verify_proof(&nonce, &proof, &publics).is_ok());
     }
@@ -267,17 +263,11 @@ mod test {
         let (_, pa) = generate_proof(&leaf, &neighbors_a, &nonce1);
         let (_, pb) = generate_proof(&leaf, &neighbors_b, &nonce1);
         // H equal across different trees with same nonce
-        assert_eq!(
-            &pa[PUB_ROOT_SIZE..PUB_ROOT_SIZE + PUB_COMMIT_SIZE],
-            &pb[PUB_ROOT_SIZE..PUB_ROOT_SIZE + PUB_COMMIT_SIZE]
-        );
+        assert_eq!(&pa[HASH_SIZE..2 * HASH_SIZE], &pb[HASH_SIZE..2 * HASH_SIZE]);
         // Root likely differs if neighbors differ
-        assert_ne!(&pa[0..PUB_ROOT_SIZE], &pb[0..PUB_ROOT_SIZE]);
+        assert_ne!(&pa[0..HASH_SIZE], &pb[0..HASH_SIZE]);
         // H must differ across nonces
         let (_, pc) = generate_proof(&leaf, &neighbors_a, &nonce2);
-        assert_ne!(
-            &pa[PUB_ROOT_SIZE..PUB_ROOT_SIZE + PUB_COMMIT_SIZE],
-            &pc[PUB_ROOT_SIZE..PUB_ROOT_SIZE + PUB_COMMIT_SIZE]
-        );
+        assert_ne!(&pa[HASH_SIZE..2 * HASH_SIZE], &pc[HASH_SIZE..2 * HASH_SIZE]);
     }
 }
