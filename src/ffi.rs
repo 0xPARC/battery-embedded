@@ -173,10 +173,7 @@ pub extern "C" fn zkp_generate_proof(
     if neighbors[0].1 {
         return BATTERY_ERR_INPUT;
     }
-    let (proof, public_values) = zkp::generate_proof(&leaf, &neighbors, &nonce_arr);
-    if public_values.len() != zkp::HASH_SIZE {
-        return BATTERY_ERR_INPUT;
-    }
+    let (proof, _public_values) = zkp::generate_proof(&leaf, &neighbors, &nonce_arr);
     let out_bytes = unsafe { core::slice::from_raw_parts_mut(proof_out, proof_out_len) };
     match postcard::to_slice(&proof, out_bytes) {
         Ok(rem) => {

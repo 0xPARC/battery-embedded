@@ -6,6 +6,7 @@ use p3_fri::{HidingFriPcs, create_benchmark_fri_params_zk};
 use p3_keccak::{Keccak256Hash, KeccakF};
 use p3_koala_bear::{GenericPoseidon2LinearLayersKoalaBear, KoalaBear};
 use p3_matrix::Matrix;
+use p3_field::integers::QuotientMap;
 use p3_merkle_tree::MerkleTreeHidingMmcs;
 use p3_poseidon2::poseidon2_round_numbers_128;
 use p3_symmetric::{CompressionFunctionFromHasher, PaddingFreeSponge, SerializingHasher};
@@ -24,6 +25,11 @@ pub mod generation;
 
 pub const WIDTH: usize = 16;
 pub const HASH_SIZE: usize = 8;
+// Public-values layout: [root(8) | H(8) | nonce(8)]
+pub const PUB_ROOT_SIZE: usize = HASH_SIZE;
+pub const PUB_COMMIT_SIZE: usize = HASH_SIZE;
+pub const PUB_NONCE_SIZE: usize = HASH_SIZE;
+pub const PUB_TOTAL_SIZE: usize = PUB_ROOT_SIZE + PUB_COMMIT_SIZE + PUB_NONCE_SIZE; // 24
 
 // BabyBear parameters
 // BabyBear seems to use about 5% more memory than KoalaBear
@@ -94,10 +100,41 @@ pub fn generate_proof(
 
     let fri_params = create_benchmark_fri_params_zk(challenge_mmcs);
 
-    let trace = air.generate_trace_rows(leaf, neighbors, fri_params.log_blowup);
-    let public_values = trace.row_slice(trace.height() - 1).unwrap()
-        [trace.width() - WIDTH..trace.width() - WIDTH + 8]
-        .to_vec();
+    // Convert nonce bytes into 8 field elements (little‑endian u32 chunks).
+    let mut nonce_f = [Val::from_canonical_checked(0).unwrap(); HASH_SIZE];
+    for i in 0..HASH_SIZE {
+        let base = i * 4;
+        let word = u32::from_le_bytes([
+            nonce[base],
+            nonce[base + 1],
+            nonce[base + 2],
+            nonce[base + 3],
+        ]);
+        nonce_f[i] = Val::from_canonical_checked(word).unwrap();
+    }
+
+    let trace = air.generate_trace_rows(leaf, neighbors, &nonce_f, fri_params.log_blowup);
+
+    // Extract public outputs from the last row.
+    let last_row: Vec<Val> = {
+        let row = trace.row_slice(trace.height() - 1).unwrap();
+        row.to_vec()
+    };
+    let cols = trace.width();
+    let poseidon_cols = p3_poseidon2_air::num_cols::<
+        WIDTH,
+        SBOX_DEGREE,
+        SBOX_REGISTERS,
+        HALF_FULL_ROUNDS,
+        PARTIAL_ROUNDS,
+    >();
+    let root_start = cols - poseidon_cols - WIDTH; // end of merkle block minus WIDTH
+    let h_start = cols - WIDTH; // end of commit block minus WIDTH
+
+    let mut public_values = Vec::with_capacity(PUB_TOTAL_SIZE);
+    public_values.extend_from_slice(&last_row[root_start..root_start + PUB_ROOT_SIZE]);
+    public_values.extend_from_slice(&last_row[h_start..h_start + PUB_COMMIT_SIZE]);
+    public_values.extend_from_slice(&nonce_f);
 
     let dft = Dft::default();
 
@@ -155,14 +192,34 @@ pub fn verify_proof(
 
     let config = MyConfig::new(pcs, challenger);
 
-    verify(&config, &air, proof, public_values)
+    // Overwrite the nonce slice in public values with the verifier's nonce binding.
+    let mut pv = public_values.clone();
+    if pv.len() >= PUB_TOTAL_SIZE {
+        let mut nonce_f = [Val::from_canonical_checked(0).unwrap(); HASH_SIZE];
+        for i in 0..HASH_SIZE {
+            let base = i * 4;
+            let word = u32::from_le_bytes([
+                nonce[base],
+                nonce[base + 1],
+                nonce[base + 2],
+                nonce[base + 3],
+            ]);
+            nonce_f[i] = Val::from_canonical_checked(word).unwrap();
+        }
+        let start = PUB_ROOT_SIZE + PUB_COMMIT_SIZE; // nonce slice offset
+        for i in 0..HASH_SIZE {
+            pv[start + i] = nonce_f[i];
+        }
+    }
+
+    verify(&config, &air, proof, &pv)
 }
 
 #[cfg(test)]
 mod test {
     use p3_field::integers::QuotientMap;
 
-    use super::{Val, generate_proof};
+    use super::{Val, generate_proof, HASH_SIZE};
 
     #[test]
     fn test_root_independent_of_nonce() {
@@ -172,6 +229,7 @@ mod test {
         let nonce2 = [1; 32];
         let (_, public1) = generate_proof(&leaf, &neighbors, &nonce1);
         let (_, public2) = generate_proof(&leaf, &neighbors, &nonce2);
-        assert_eq!(public1, public2);
+        // Root (first 8) must be independent of nonce.
+        assert_eq!(&public1[0..HASH_SIZE], &public2[0..HASH_SIZE]);
     }
 }

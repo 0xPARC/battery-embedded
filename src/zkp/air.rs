@@ -35,7 +35,7 @@ impl<
     const SBOX_REGISTERS: usize,
     const HALF_FULL_ROUNDS: usize,
     const PARTIAL_ROUNDS: usize,
-> BaseAir<F>
+    > BaseAir<F>
     for MerkleInclusionAir<
         F,
         LinearLayers,
@@ -46,14 +46,15 @@ impl<
     >
 {
     fn width(&self) -> usize {
-        HASH_OFFSET
-            + p3_poseidon2_air::num_cols::<
-                WIDTH,
-                SBOX_DEGREE,
-                SBOX_REGISTERS,
-                HALF_FULL_ROUNDS,
-                PARTIAL_ROUNDS,
-            >()
+        let poseidon_cols = p3_poseidon2_air::num_cols::<
+            WIDTH,
+            SBOX_DEGREE,
+            SBOX_REGISTERS,
+            HALF_FULL_ROUNDS,
+            PARTIAL_ROUNDS,
+        >();
+        // Layout: [inputs .. HASH_OFFSET) | merkle_poseidon (poseidon_cols) | commit_poseidon (poseidon_cols)
+        HASH_OFFSET + (poseidon_cols << 1)
     }
 }
 
@@ -85,6 +86,7 @@ impl<
         &self,
         leaf: &[F; HASH_SIZE],
         neighbors: &[([F; HASH_SIZE], bool)],
+        nonce: &[F; HASH_SIZE],
         extra_capacity_bits: usize,
     ) -> RowMajorMatrix<F> {
         let rows = neighbors.len();
@@ -96,6 +98,13 @@ impl<
         let trace_size = rows * cols;
         let mut vec = Vec::with_capacity(trace_size << extra_capacity_bits);
         vec.resize(trace_size, F::ZERO);
+        let poseidon_cols = p3_poseidon2_air::num_cols::<
+            WIDTH,
+            SBOX_DEGREE,
+            SBOX_REGISTERS,
+            HALF_FULL_ROUNDS,
+            PARTIAL_ROUNDS,
+        >();
         for row_num in 0..rows {
             let row_offset = row_num * cols;
             let (pvs, current) = vec.split_at_mut(row_offset);
@@ -103,7 +112,10 @@ impl<
             let second_input = if row_num == 0 {
                 leaf
             } else {
-                &pvs[pvs.len() - WIDTH..pvs.len() - WIDTH + HASH_SIZE]
+                // Previous row's Merkle Poseidon output (not the commit block).
+                let prev_row_start = pvs.len() - cols;
+                let merkle_out_start = prev_row_start + (HASH_OFFSET + poseidon_cols - WIDTH);
+                &pvs[merkle_out_start..merkle_out_start + HASH_SIZE]
             };
             current[HASH_SIZE..HASH_SIZE_2].copy_from_slice(second_input);
             let mut state = [F::ZERO; WIDTH];
@@ -115,7 +127,8 @@ impl<
                 state[HASH_SIZE..HASH_SIZE_2].copy_from_slice(&current[0..HASH_SIZE]);
                 F::ZERO
             };
-            let hash_slice = &mut current[HASH_OFFSET..cols];
+            // Merkle hash Poseidon block
+            let hash_slice = &mut current[HASH_OFFSET..HASH_OFFSET + poseidon_cols];
             // The memory is initialized, but generate_trace_rows_for_perm
             // is copied from p3_poseidon2_air and it expects MaybeUninit.
             let hash_slice_maybe_uninit = unsafe {
@@ -132,6 +145,27 @@ impl<
                 HALF_FULL_ROUNDS,
                 PARTIAL_ROUNDS,
             >(hash_slice_maybe_uninit.borrow_mut(), state, &self.constants);
+
+            // Commitment Poseidon block: state = [leaf || nonce]
+            let mut commit_state = [F::ZERO; WIDTH];
+            commit_state[0..HASH_SIZE].copy_from_slice(leaf);
+            commit_state[HASH_SIZE..HASH_SIZE_2].copy_from_slice(nonce);
+            let commit_slice =
+                &mut current[HASH_OFFSET + poseidon_cols..HASH_OFFSET + (poseidon_cols << 1)];
+            let commit_slice_maybe_uninit = unsafe {
+                core::slice::from_raw_parts_mut(
+                    commit_slice.as_mut_ptr() as *mut MaybeUninit<F>,
+                    commit_slice.len(),
+                )
+            };
+            generate_trace_rows_for_perm::<
+                F,
+                LinearLayers,
+                SBOX_DEGREE,
+                SBOX_REGISTERS,
+                HALF_FULL_ROUNDS,
+                PARTIAL_ROUNDS,
+            >(commit_slice_maybe_uninit.borrow_mut(), commit_state, &self.constants);
         }
         RowMajorMatrix::new(vec, cols)
     }
@@ -158,8 +192,17 @@ impl<
         let main = builder.main();
         let local = main.row_slice(0).unwrap();
         let next = main.row_slice(1).unwrap();
-        let (inputs, hash) = local.split_at(HASH_OFFSET);
+        let (inputs, rest) = local.split_at(HASH_OFFSET);
+        let poseidon_cols = p3_poseidon2_air::num_cols::<
+            WIDTH,
+            SBOX_DEGREE,
+            SBOX_REGISTERS,
+            HALF_FULL_ROUNDS,
+            PARTIAL_ROUNDS,
+        >();
+        let (hash, commit) = rest.split_at(poseidon_cols);
         builder.assert_one(hash[0]);
+        builder.assert_one(commit[0]);
         let selector = inputs[HASH_SIZE_2];
         let one_minus_selector = hash[0] - selector;
         builder.assert_zero(selector * one_minus_selector);
@@ -182,12 +225,33 @@ impl<
         for i in HASH_SIZE_2..WIDTH {
             builder.assert_zero(hash[i + 1]);
         }
+        // Evaluate both Poseidon blocks
         eval_poseidon2(self, builder, hash.borrow());
+        eval_poseidon2(self, builder, commit.borrow());
+
+        // Public values layout: [root(8) | H(8) | nonce(8)]
         let public_values = builder.public_values().to_vec();
         for i in 0..HASH_SIZE {
             builder
                 .when_last_row()
                 .assert_eq(hash[hash.len() - WIDTH + i], public_values[i])
+        }
+
+        // Bind commit inputs and outputs.
+        // On first row, commit inputs must be [leaf || nonce]
+        for i in 0..HASH_SIZE {
+            builder
+                .when_first_row()
+                .assert_eq(commit[i + 1], inputs[HASH_SIZE + i]);
+            builder
+                .when_first_row()
+                .assert_eq(commit[HASH_SIZE + 1 + i], public_values[16 + i]);
+        }
+        // On last row, commit output must equal public H slice.
+        for i in 0..HASH_SIZE {
+            builder
+                .when_last_row()
+                .assert_eq(commit[commit.len() - WIDTH + i], public_values[8 + i]);
         }
     }
 }
