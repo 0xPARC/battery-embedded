@@ -33,7 +33,7 @@
 
 #define AES_IV_LEN 16
 
-#define BATTERY_API_VERSION 3
+#define BATTERY_API_VERSION 1
 
 void rust_eh_personality(void);
 

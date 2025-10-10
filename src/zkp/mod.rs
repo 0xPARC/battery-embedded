@@ -2,11 +2,11 @@
 use p3_challenger::{HashChallenger, SerializingChallenger32};
 use p3_commit::ExtensionMmcs;
 use p3_field::extension::BinomialExtensionField;
+use p3_field::integers::QuotientMap;
 use p3_fri::{HidingFriPcs, create_benchmark_fri_params_zk};
 use p3_keccak::{Keccak256Hash, KeccakF};
 use p3_koala_bear::{GenericPoseidon2LinearLayersKoalaBear, KoalaBear};
 use p3_matrix::Matrix;
-use p3_field::integers::QuotientMap;
 use p3_merkle_tree::MerkleTreeHidingMmcs;
 use p3_poseidon2::poseidon2_round_numbers_128;
 use p3_symmetric::{CompressionFunctionFromHasher, PaddingFreeSponge, SerializingHasher};
@@ -215,7 +215,7 @@ pub fn verify_proof(
 mod test {
     use p3_field::integers::QuotientMap;
 
-    use super::{Val, generate_proof, verify_proof, HASH_SIZE};
+    use super::{HASH_SIZE, Val, generate_proof, verify_proof};
 
     #[test]
     fn test_root_independent_of_nonce() {

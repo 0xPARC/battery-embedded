@@ -35,7 +35,7 @@ impl<
     const SBOX_REGISTERS: usize,
     const HALF_FULL_ROUNDS: usize,
     const PARTIAL_ROUNDS: usize,
-    > BaseAir<F>
+> BaseAir<F>
     for MerkleInclusionAir<
         F,
         LinearLayers,
@@ -165,7 +165,11 @@ impl<
                 SBOX_REGISTERS,
                 HALF_FULL_ROUNDS,
                 PARTIAL_ROUNDS,
-            >(commit_slice_maybe_uninit.borrow_mut(), commit_state, &self.constants);
+            >(
+                commit_slice_maybe_uninit.borrow_mut(),
+                commit_state,
+                &self.constants,
+            );
         }
         RowMajorMatrix::new(vec, cols)
     }

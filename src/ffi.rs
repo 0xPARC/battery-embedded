@@ -4,8 +4,8 @@ use crate::tfhe::encode_bits_as_trlwe_plaintext;
 use crate::tfhe::{TFHEPublicKey, TRLWECiphertext};
 use crate::zkp::{self, Val};
 
-use p3_field::integers::QuotientMap;
 use p3_field::PrimeField32;
+use p3_field::integers::QuotientMap;
 use rand::SeedableRng;
 use rand_chacha::ChaCha20Rng;
 
@@ -27,7 +27,7 @@ pub const BATTERY_NONCE_LEN: usize = 32; // ZKP Fiat–Shamir nonce length
 pub const AES_KEY_LEN: usize = 16;
 pub const AES_IV_LEN: usize = 16;
 
-pub const BATTERY_API_VERSION: u32 = 3; // bumped: zkp_generate_proof bundles proof+publics
+pub const BATTERY_API_VERSION: u32 = 1; // keep initial API version; not deployed yet
 
 #[unsafe(no_mangle)]
 pub extern "C" fn battery_api_version() -> u32 {
@@ -187,12 +187,16 @@ pub extern "C" fn zkp_generate_proof(
     match postcard::to_slice(&pair, out_bytes) {
         Ok(rem) => {
             let written = out_len - rem.len();
-            unsafe { *out_written = written; }
+            unsafe {
+                *out_written = written;
+            }
             BATTERY_OK
         }
         Err(_) => match postcard::to_allocvec(&pair) {
             Ok(bytes) => {
-                unsafe { *out_written = bytes.len(); }
+                unsafe {
+                    *out_written = bytes.len();
+                }
                 BATTERY_ERR_BUFSZ
             }
             Err(_) => BATTERY_ERR_INPUT,
