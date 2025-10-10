@@ -5,6 +5,7 @@ use crate::tfhe::{TFHEPublicKey, TRLWECiphertext};
 use crate::zkp::{self, Val};
 
 use p3_field::integers::QuotientMap;
+use p3_field::PrimeField32;
 use rand::SeedableRng;
 use rand_chacha::ChaCha20Rng;
 
@@ -26,7 +27,7 @@ pub const BATTERY_NONCE_LEN: usize = 32; // ZKP Fiat–Shamir nonce length
 pub const AES_KEY_LEN: usize = 16;
 pub const AES_IV_LEN: usize = 16;
 
-pub const BATTERY_API_VERSION: u32 = 1;
+pub const BATTERY_API_VERSION: u32 = 3; // bumped: zkp_generate_proof bundles proof+publics
 
 #[unsafe(no_mangle)]
 pub extern "C" fn battery_api_version() -> u32 {
@@ -119,8 +120,8 @@ struct OpaqueMerklePathArgs {
 /// - `args`/`args_len`: postcard-serialized OpaqueMerklePathArgs
 /// - `nonce32` (len=`BATTERY_NONCE_LEN`)
 /// Outputs:
-/// - `proof_out`/`proof_out_len`: caller-provided buffer for postcard-serialized proof.
-/// - `out_proof_written`: number of bytes written. If too small, returns `BATTERY_ERR_BUFSZ`.
+/// - `out`/`out_len`: caller-provided buffer for postcard-serialized opaque bundle containing both the proof and public values.
+/// - `out_written`: number of bytes written. If too small, returns `BATTERY_ERR_BUFSZ`.
 ///
 /// Serialization: postcard 1.x (stable).
 #[unsafe(no_mangle)]
@@ -128,11 +129,11 @@ pub extern "C" fn zkp_generate_proof(
     args: *const u8,
     args_len: usize,
     nonce32: *const u8,
-    proof_out: *mut u8,
-    proof_out_len: usize,
-    out_proof_written: *mut usize,
+    out: *mut u8,
+    out_len: usize,
+    out_written: *mut usize,
 ) -> i32 {
-    if args.is_null() || nonce32.is_null() || proof_out.is_null() || out_proof_written.is_null() {
+    if args.is_null() || nonce32.is_null() || out.is_null() || out_written.is_null() {
         return BATTERY_ERR_NULL;
     }
     let args_bytes = unsafe { core::slice::from_raw_parts(args, args_len) };
@@ -173,21 +174,24 @@ pub extern "C" fn zkp_generate_proof(
     if neighbors[0].1 {
         return BATTERY_ERR_INPUT;
     }
-    let (proof, _public_values) = zkp::generate_proof(&leaf, &neighbors, &nonce_arr);
-    let out_bytes = unsafe { core::slice::from_raw_parts_mut(proof_out, proof_out_len) };
-    match postcard::to_slice(&proof, out_bytes) {
+    let (proof, public_values) = zkp::generate_proof(&leaf, &neighbors, &nonce_arr);
+    // Convert public values to portable u32 form.
+    let mut publics_arr = [0u32; zkp::PUB_TOTAL_SIZE];
+    for i in 0..zkp::PUB_TOTAL_SIZE {
+        publics_arr[i] = public_values[i].as_canonical_u32();
+    }
+    // Serialize tuple (proof, publics_u32) directly via postcard.
+    let pair = (proof, publics_arr);
+    let out_bytes = unsafe { core::slice::from_raw_parts_mut(out, out_len) };
+    match postcard::to_slice(&pair, out_bytes) {
         Ok(rem) => {
-            let written = proof_out_len - rem.len();
-            unsafe {
-                *out_proof_written = written;
-            }
+            let written = out_len - rem.len();
+            unsafe { *out_written = written; }
             BATTERY_OK
         }
-        Err(_) => match postcard::to_allocvec(&proof) {
+        Err(_) => match postcard::to_allocvec(&pair) {
             Ok(bytes) => {
-                unsafe {
-                    *out_proof_written = bytes.len();
-                }
+                unsafe { *out_written = bytes.len(); }
                 BATTERY_ERR_BUFSZ
             }
             Err(_) => BATTERY_ERR_INPUT,
@@ -330,6 +334,7 @@ pub extern "C" fn zkp_pack_args(
 mod tests {
     use super::*;
     use postcard::from_bytes;
+    use serde::de::IgnoredAny;
 
     #[test]
     fn pack_public_key_roundtrip() {
@@ -413,5 +418,127 @@ mod tests {
         );
         assert_eq!(rc2, BATTERY_ERR_BUFSZ);
         assert!(proof_written > 0);
+    }
+
+    #[test]
+    fn zkp_bundle_roundtrip_and_stability() {
+        // Build two different trees, same leaf and nonce; H must match while root likely differs.
+        let levels = 6usize;
+        let leaf = [7u32; 8];
+        let neighbors_a = vec![3u32; levels * 8];
+        let neighbors_b = vec![9u32; levels * 8];
+        let sides = vec![0u8; levels];
+        let mut args_buf = vec![0u8; 1 << 16];
+        let mut args_len: usize = 0;
+        let rc = zkp_pack_args(
+            leaf.as_ptr(),
+            neighbors_a.as_ptr(),
+            sides.as_ptr(),
+            levels,
+            args_buf.as_mut_ptr(),
+            args_buf.len(),
+            &mut args_len as *mut usize,
+        );
+        assert_eq!(rc, BATTERY_OK);
+        let nonce = [5u8; BATTERY_NONCE_LEN];
+        let mut out1 = vec![0u8; 1 << 16];
+        let mut out1_written = 0usize;
+        let rc1 = zkp_generate_proof(
+            args_buf.as_ptr(),
+            args_len,
+            nonce.as_ptr(),
+            out1.as_mut_ptr(),
+            out1.len(),
+            &mut out1_written as *mut usize,
+        );
+        assert_eq!(rc1, BATTERY_OK);
+        // Repack args with a different neighbor set
+        let rc2 = zkp_pack_args(
+            leaf.as_ptr(),
+            neighbors_b.as_ptr(),
+            sides.as_ptr(),
+            levels,
+            args_buf.as_mut_ptr(),
+            args_buf.len(),
+            &mut args_len as *mut usize,
+        );
+        assert_eq!(rc2, BATTERY_OK);
+        let mut out2 = vec![0u8; 1 << 16];
+        let mut out2_written = 0usize;
+        let rc3 = zkp_generate_proof(
+            args_buf.as_ptr(),
+            args_len,
+            nonce.as_ptr(),
+            out2.as_mut_ptr(),
+            out2.len(),
+            &mut out2_written as *mut usize,
+        );
+        assert_eq!(rc3, BATTERY_OK);
+
+        // Decode both blobs, ignoring the proof type, extracting publics only.
+        let (_skip1, publics1): (IgnoredAny, [u32; zkp::PUB_TOTAL_SIZE]) =
+            from_bytes(&out1[..out1_written]).unwrap();
+        let (_skip2, publics2): (IgnoredAny, [u32; zkp::PUB_TOTAL_SIZE]) =
+            from_bytes(&out2[..out2_written]).unwrap();
+
+        // H stable
+        assert_eq!(&publics1[zkp::PUB_ROOT_SIZE..zkp::PUB_ROOT_SIZE + zkp::PUB_COMMIT_SIZE],
+                   &publics2[zkp::PUB_ROOT_SIZE..zkp::PUB_ROOT_SIZE + zkp::PUB_COMMIT_SIZE]);
+        // Roots likely differ for different neighbor values
+        assert_ne!(&publics1[0..zkp::PUB_ROOT_SIZE], &publics2[0..zkp::PUB_ROOT_SIZE]);
+    }
+
+    #[test]
+    fn zkp_bundle_changes_with_nonce() {
+        let levels = 4usize;
+        let leaf = [4u32; 8];
+        let neighbors = vec![3u32; levels * 8];
+        let sides = vec![0u8; levels];
+        let mut args_buf = vec![0u8; 1 << 16];
+        let mut args_len: usize = 0;
+        let rc = zkp_pack_args(
+            leaf.as_ptr(),
+            neighbors.as_ptr(),
+            sides.as_ptr(),
+            levels,
+            args_buf.as_mut_ptr(),
+            args_buf.len(),
+            &mut args_len as *mut usize,
+        );
+        assert_eq!(rc, BATTERY_OK);
+        let nonce1 = [1u8; BATTERY_NONCE_LEN];
+        let nonce2 = [2u8; BATTERY_NONCE_LEN];
+        let mut out1 = vec![0u8; 1 << 16];
+        let mut out2 = vec![0u8; 1 << 16];
+        let mut w1 = 0usize;
+        let mut w2 = 0usize;
+        assert_eq!(
+            zkp_generate_proof(
+                args_buf.as_ptr(),
+                args_len,
+                nonce1.as_ptr(),
+                out1.as_mut_ptr(),
+                out1.len(),
+                &mut w1 as *mut usize,
+            ),
+            BATTERY_OK
+        );
+        assert_eq!(
+            zkp_generate_proof(
+                args_buf.as_ptr(),
+                args_len,
+                nonce2.as_ptr(),
+                out2.as_mut_ptr(),
+                out2.len(),
+                &mut w2 as *mut usize,
+            ),
+            BATTERY_OK
+        );
+        let (_skip1, publics1): (IgnoredAny, [u32; zkp::PUB_TOTAL_SIZE]) =
+            from_bytes(&out1[..w1]).unwrap();
+        let (_skip2, publics2): (IgnoredAny, [u32; zkp::PUB_TOTAL_SIZE]) =
+            from_bytes(&out2[..w2]).unwrap();
+        assert_ne!(&publics1[zkp::PUB_ROOT_SIZE..zkp::PUB_ROOT_SIZE + zkp::PUB_COMMIT_SIZE],
+                   &publics2[zkp::PUB_ROOT_SIZE..zkp::PUB_ROOT_SIZE + zkp::PUB_COMMIT_SIZE]);
     }
 }

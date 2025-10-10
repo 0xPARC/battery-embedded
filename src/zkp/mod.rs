@@ -219,7 +219,7 @@ pub fn verify_proof(
 mod test {
     use p3_field::integers::QuotientMap;
 
-    use super::{Val, generate_proof, HASH_SIZE};
+    use super::{Val, generate_proof, verify_proof, HASH_SIZE, PUB_ROOT_SIZE, PUB_COMMIT_SIZE, PUB_NONCE_SIZE};
 
     #[test]
     fn test_root_independent_of_nonce() {
@@ -231,5 +231,53 @@ mod test {
         let (_, public2) = generate_proof(&leaf, &neighbors, &nonce2);
         // Root (first 8) must be independent of nonce.
         assert_eq!(&public1[0..HASH_SIZE], &public2[0..HASH_SIZE]);
+    }
+
+    #[test]
+    fn verify_fails_with_wrong_nonce() {
+        let leaf = [Val::from_canonical_checked(7).unwrap(); 8];
+        let neighbors = [([Val::from_canonical_checked(5).unwrap(); 8], false); 16];
+        let nonce = [9u8; 32];
+        let wrong = [8u8; 32];
+        let (proof, publics) = generate_proof(&leaf, &neighbors, &nonce);
+        assert!(verify_proof(&wrong, &proof, &publics).is_err());
+        assert!(verify_proof(&nonce, &proof, &publics).is_ok());
+    }
+
+    #[test]
+    fn verify_overrides_public_nonce_slice() {
+        let leaf = [Val::from_canonical_checked(11).unwrap(); 8];
+        let neighbors = [([Val::from_canonical_checked(13).unwrap(); 8], false); 8];
+        let nonce = [42u8; 32];
+        let (proof, mut publics) = generate_proof(&leaf, &neighbors, &nonce);
+        // Corrupt the published nonce slice; verifier should ignore and still accept using its argument.
+        for i in 0..PUB_NONCE_SIZE {
+            publics[PUB_ROOT_SIZE + PUB_COMMIT_SIZE + i] = Val::from_canonical_checked(123456u32 + i as u32).unwrap();
+        }
+        assert!(verify_proof(&nonce, &proof, &publics).is_ok());
+    }
+
+    #[test]
+    fn commit_stable_across_tree_changes_but_changes_with_nonce() {
+        let leaf = [Val::from_canonical_checked(3).unwrap(); 8];
+        let neighbors_a = [([Val::from_canonical_checked(2).unwrap(); 8], false); 16];
+        let neighbors_b = [([Val::from_canonical_checked(4).unwrap(); 8], false); 16];
+        let nonce1 = [1u8; 32];
+        let nonce2 = [2u8; 32];
+        let (_, pa) = generate_proof(&leaf, &neighbors_a, &nonce1);
+        let (_, pb) = generate_proof(&leaf, &neighbors_b, &nonce1);
+        // H equal across different trees with same nonce
+        assert_eq!(
+            &pa[PUB_ROOT_SIZE..PUB_ROOT_SIZE + PUB_COMMIT_SIZE],
+            &pb[PUB_ROOT_SIZE..PUB_ROOT_SIZE + PUB_COMMIT_SIZE]
+        );
+        // Root likely differs if neighbors differ
+        assert_ne!(&pa[0..PUB_ROOT_SIZE], &pb[0..PUB_ROOT_SIZE]);
+        // H must differ across nonces
+        let (_, pc) = generate_proof(&leaf, &neighbors_a, &nonce2);
+        assert_ne!(
+            &pa[PUB_ROOT_SIZE..PUB_ROOT_SIZE + PUB_COMMIT_SIZE],
+            &pc[PUB_ROOT_SIZE..PUB_ROOT_SIZE + PUB_COMMIT_SIZE]
+        );
     }
 }

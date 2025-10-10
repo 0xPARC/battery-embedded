@@ -45,7 +45,7 @@
 
 #define AES_IV_LEN 16
 
-#define BATTERY_API_VERSION 1
+#define BATTERY_API_VERSION 3
 
 void rust_eh_personality(void);
 
@@ -78,17 +78,17 @@ int32_t tfhe_pk_encrypt_aes_key(const uint8_t *pk,
  * - `args`/`args_len`: postcard-serialized OpaqueMerklePathArgs
  * - `nonce32` (len=`BATTERY_NONCE_LEN`)
  * Outputs:
- * - `proof_out`/`proof_out_len`: caller-provided buffer for postcard-serialized proof.
- * - `out_proof_written`: number of bytes written. If too small, returns `BATTERY_ERR_BUFSZ`.
+ * - `out`/`out_len`: caller-provided buffer for postcard-serialized opaque bundle containing both the proof and public values.
+ * - `out_written`: number of bytes written. If too small, returns `BATTERY_ERR_BUFSZ`.
  *
  * Serialization: postcard 1.x (stable).
  */
 int32_t zkp_generate_proof(const uint8_t *args,
                            size_t args_len,
                            const uint8_t *nonce32,
-                           uint8_t *proof_out,
-                           size_t proof_out_len,
-                           size_t *out_proof_written);
+                           uint8_t *out,
+                           size_t out_len,
+                           size_t *out_written);
 
 int32_t aes_ctr_encrypt(uint8_t *buf,
                         size_t len,
