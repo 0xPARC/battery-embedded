@@ -1,7 +1,7 @@
 //use p3_baby_bear::{BabyBear, GenericPoseidon2LinearLayersBabyBear};
 use p3_challenger::{HashChallenger, SerializingChallenger32};
 use p3_commit::ExtensionMmcs;
-use p3_field::extension::BinomialExtensionField;
+use p3_field::{extension::BinomialExtensionField, integers::QuotientMap};
 use p3_fri::{HidingFriPcs, create_benchmark_fri_params_zk};
 use p3_keccak::{Keccak256Hash, KeccakF};
 use p3_koala_bear::{GenericPoseidon2LinearLayersKoalaBear, KoalaBear};
@@ -62,6 +62,14 @@ type ValMmcs = MerkleTreeHidingMmcs<
     4,
 >;
 
+pub fn nonce_field_rep(nonce: &[u8; 32]) -> [Val; 8] {
+    core::array::from_fn(|i| {
+        Val::from_int(u32::from_le_bytes(
+            nonce[4 * i..4 * i + 4].try_into().unwrap(),
+        ))
+    })
+}
+
 pub fn generate_proof(
     leaf: &[Val; 8],
     neighbors: &[([Val; 8], bool)],
@@ -94,10 +102,14 @@ pub fn generate_proof(
 
     let fri_params = create_benchmark_fri_params_zk(challenge_mmcs);
 
-    let trace = air.generate_trace_rows(leaf, neighbors, fri_params.log_blowup);
-    let public_values = trace.row_slice(trace.height() - 1).unwrap()
+    let nonce_field = nonce_field_rep(nonce);
+    let trace = air.generate_trace_rows(leaf, neighbors, &nonce_field, fri_params.log_blowup);
+    let mut public_values = trace.row_slice(trace.height() - 1).unwrap()
         [trace.width() - WIDTH..trace.width() - WIDTH + 8]
         .to_vec();
+    public_values.extend_from_slice(&nonce_field);
+    public_values
+        .extend_from_slice(&trace.values[trace.width - WIDTH..trace.width - WIDTH + HASH_SIZE]);
 
     let dft = Dft::default();
 
@@ -162,16 +174,23 @@ pub fn verify_proof(
 mod test {
     use p3_field::integers::QuotientMap;
 
+    use crate::zkp::nonce_field_rep;
+
     use super::{Val, generate_proof};
 
     #[test]
     fn test_root_independent_of_nonce() {
         let leaf = [Val::from_canonical_checked(4).unwrap(); 8];
-        let neighbors = [([Val::from_canonical_checked(3).unwrap(); 8], false); 32];
+        let neighbors = [([Val::from_canonical_checked(3).unwrap(); 8], false); 31];
         let nonce1 = [0; 32];
         let nonce2 = [1; 32];
         let (_, public1) = generate_proof(&leaf, &neighbors, &nonce1);
         let (_, public2) = generate_proof(&leaf, &neighbors, &nonce2);
-        assert_eq!(public1, public2);
+        let nonce_field1 = nonce_field_rep(&nonce1);
+        let nonce_field2 = nonce_field_rep(&nonce2);
+        assert_eq!(public1[0..8], public2[0..8]);
+        assert_eq!(public1[8..16], nonce_field1);
+        assert_eq!(public2[8..16], nonce_field2);
+        assert_ne!(public1[16..24], public2[16..24]);
     }
 }
