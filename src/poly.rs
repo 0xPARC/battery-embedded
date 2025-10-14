@@ -5,11 +5,7 @@ use rand::Rng;
 // Const-generic helpers over fixed modulus Q
 #[inline(always)]
 const fn qmask<const Q: u64>() -> u64 {
-    if Q.is_power_of_two() {
-        Q - 1
-    } else {
-        0
-    }
+    if Q.is_power_of_two() { Q - 1 } else { 0 }
 }
 
 #[inline(always)]

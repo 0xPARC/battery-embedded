@@ -204,6 +204,16 @@ impl<
         let public_values = builder.public_values().to_vec();
         for i in 0..HASH_SIZE {
             builder
+                .when_first_row()
+                .assert_eq(inputs[i], public_values[HASH_SIZE + i]);
+            builder.when_first_row().assert_eq(
+                hash[hash.len() - WIDTH + i],
+                public_values[2 * HASH_SIZE + i],
+            );
+        }
+        // Bind last-row output to PV[0..HASH_SIZE] = Merkle root.
+        for i in 0..HASH_SIZE {
+            builder
                 .when_last_row()
                 .assert_eq(hash[hash.len() - WIDTH + i], public_values[i])
         }

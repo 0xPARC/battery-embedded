@@ -3,6 +3,7 @@ use crate::aes_ctr::aes_ctr_encrypt_in_place;
 use crate::tfhe::encode_bits_as_trlwe_plaintext;
 use crate::tfhe::{TFHEPublicKey, TRLWECiphertext};
 use crate::zkp::{self, Val};
+use p3_uni_stark::Proof;
 
 use p3_field::integers::QuotientMap;
 use rand::SeedableRng;
@@ -108,6 +109,12 @@ pub extern "C" fn tfhe_pk_encrypt_aes_key(
 // ------------- ZKP -------------
 
 #[derive(serde::Serialize, serde::Deserialize)]
+struct ZkpProofBundle(
+    Proof<zkp::MerkleInclusionConfig>,
+    Vec<Val>, // public values layout: [root(8) | nonce_field(8) | hash(nonce||leaf)(8)]
+);
+
+#[derive(serde::Serialize, serde::Deserialize)]
 struct OpaqueMerklePathArgs {
     leaf8_u32: [u32; 8],
     neighbors8_by_level_u32: Vec<[u32; 8]>,
@@ -119,7 +126,8 @@ struct OpaqueMerklePathArgs {
 /// - `args`/`args_len`: postcard-serialized OpaqueMerklePathArgs
 /// - `nonce32` (len=`BATTERY_NONCE_LEN`)
 /// Outputs:
-/// - `proof_out`/`proof_out_len`: caller-provided buffer for postcard-serialized proof.
+/// - `proof_out`/`proof_out_len`: caller-provided buffer for postcard-serialized bundle:
+///   (proof, public_values) where public_values = [root(8) | nonce_field(8) | hash(nonce||leaf)(8)].
 /// - `out_proof_written`: number of bytes written. If too small, returns `BATTERY_ERR_BUFSZ`.
 ///
 /// Serialization: postcard 1.x (stable).
@@ -142,6 +150,12 @@ pub extern "C" fn zkp_generate_proof(
     };
     let levels = args.neighbors8_by_level_u32.len();
     if levels == 0 || args.sides_bitflags.len() != levels {
+        return BATTERY_ERR_INPUT;
+    }
+    // The ZKP trace includes an extra first row for hash(nonce||leaf),
+    // so the prover requires (levels + 1) to be a power of two.
+    let rows = levels + 1;
+    if !rows.is_power_of_two() {
         return BATTERY_ERR_INPUT;
     }
     let nonce = unsafe { core::slice::from_raw_parts(nonce32, BATTERY_NONCE_LEN) };
@@ -174,11 +188,14 @@ pub extern "C" fn zkp_generate_proof(
         return BATTERY_ERR_INPUT;
     }
     let (proof, public_values) = zkp::generate_proof(&leaf, &neighbors, &nonce_arr);
-    if public_values.len() != zkp::HASH_SIZE {
+    // Public values layout is fixed at 24 = 3 * HASH_SIZE elements:
+    //   [root(8) | nonce_field(8) | hash(nonce||leaf)(8)].
+    if public_values.len() != 3 * zkp::HASH_SIZE {
         return BATTERY_ERR_INPUT;
     }
+    let bundle = ZkpProofBundle(proof, public_values);
     let out_bytes = unsafe { core::slice::from_raw_parts_mut(proof_out, proof_out_len) };
-    match postcard::to_slice(&proof, out_bytes) {
+    match postcard::to_slice(&bundle, out_bytes) {
         Ok(rem) => {
             let written = proof_out_len - rem.len();
             unsafe {
@@ -186,7 +203,7 @@ pub extern "C" fn zkp_generate_proof(
             }
             BATTERY_OK
         }
-        Err(_) => match postcard::to_allocvec(&proof) {
+        Err(_) => match postcard::to_allocvec(&bundle) {
             Ok(bytes) => {
                 unsafe {
                     *out_proof_written = bytes.len();
@@ -332,7 +349,6 @@ pub extern "C" fn zkp_pack_args(
 #[cfg(all(test, feature = "ffi"))]
 mod tests {
     use super::*;
-    use postcard::from_bytes;
 
     #[test]
     fn pack_public_key_roundtrip() {
@@ -348,7 +364,7 @@ mod tests {
             &mut written as *mut usize,
         );
         assert_eq!(rc, BATTERY_OK);
-        let pk: TFHEPublicKey<TFHE_TRLWE_N, Q> = from_bytes(&buf[..written]).unwrap();
+        let pk: TFHEPublicKey<TFHE_TRLWE_N, Q> = postcard::from_bytes(&buf[..written]).unwrap();
         for i in 0..TFHE_TRLWE_N {
             assert_eq!(pk.ct.a.coeffs[i], 1u64 % Q);
             assert_eq!(pk.ct.b.coeffs[i], 2u64 % Q);
@@ -386,8 +402,9 @@ mod tests {
 
     #[test]
     fn zkp_proof_buf_too_small() {
-        // Pack args and then request proof with zero-sized buffer
-        let levels = 4usize;
+        // Pack args and then request proof with zero-sized buffer.
+        // Trace rows = levels + 1 must be a power of two.
+        let levels = 31usize; // rows = 32
         let leaf = [4u32; 8];
         let neighbors = vec![3u32; levels * 8];
         let sides = vec![0u8; levels];
@@ -416,5 +433,49 @@ mod tests {
         );
         assert_eq!(rc2, BATTERY_ERR_BUFSZ);
         assert!(proof_written > 0);
+    }
+
+    #[test]
+    fn zkp_proof_bundle_roundtrip() {
+        // Build opaque args for a valid path (rows = levels + 1 = 32)
+        let levels = 31usize;
+        let leaf = [4u32; 8];
+        let neighbors = vec![3u32; levels * 8];
+        let sides = vec![0u8; levels];
+        let mut args_buf = vec![0u8; 1 << 16];
+        let mut args_len: usize = 0;
+        let rc = zkp_pack_args(
+            leaf.as_ptr(),
+            neighbors.as_ptr(),
+            sides.as_ptr(),
+            levels,
+            args_buf.as_mut_ptr(),
+            args_buf.len(),
+            &mut args_len as *mut usize,
+        );
+        assert_eq!(rc, BATTERY_OK);
+
+        // Generate the bundle and deserialize it
+        let nonce = [0x11u8; BATTERY_NONCE_LEN];
+        let mut out = vec![0u8; 1 << 20];
+        let mut written = 0usize;
+        let rc2 = zkp_generate_proof(
+            args_buf.as_ptr(),
+            args_len,
+            nonce.as_ptr(),
+            out.as_mut_ptr(),
+            out.len(),
+            &mut written as *mut usize,
+        );
+        assert_eq!(rc2, BATTERY_OK);
+        assert!(written > 0);
+
+        let bundle: ZkpProofBundle = postcard::from_bytes(&out[..written]).unwrap();
+        // Expect exactly 3 * HASH_SIZE public values: root(8) | nonce_field(8) | hash(nonce||leaf)(8)
+        assert_eq!(bundle.1.len(), 3 * zkp::HASH_SIZE);
+        // Re-serialize and deserialize again to check roundtrip stability of the bundle
+        let bytes2 = postcard::to_allocvec(&bundle).unwrap();
+        let bundle2: ZkpProofBundle = postcard::from_bytes(&bytes2).unwrap();
+        assert_eq!(bundle2.1, bundle.1);
     }
 }
