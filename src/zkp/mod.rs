@@ -45,7 +45,7 @@ type PoseidonLayers = GenericPoseidon2LinearLayersKoalaBear;
 type Dft = p3_dft::Radix2Dit<Val>;
 type Challenge = BinomialExtensionField<Val, 4>;
 type Pcs = HidingFriPcs<Val, Dft, ValMmcs, ChallengeMmcs, ChaCha20Rng>;
-type MyConfig = StarkConfig<Pcs, Challenge, Challenger>;
+pub type MerkleInclusionConfig = StarkConfig<Pcs, Challenge, Challenger>;
 type ChallengeMmcs = ExtensionMmcs<Val, Challenge, ValMmcs>;
 type Challenger = SerializingChallenger32<Val, HashChallenger<u8, ByteHash, 32>>;
 type ByteHash = Keccak256Hash;
@@ -74,7 +74,7 @@ pub fn generate_proof(
     leaf: &[Val; 8],
     neighbors: &[([Val; 8], bool)],
     nonce: &[u8; 32],
-) -> (Proof<StarkConfig<Pcs, Challenge, Challenger>>, Vec<Val>) {
+) -> (Proof<MerkleInclusionConfig>, Vec<Val>) {
     let byte_hash = ByteHash {};
 
     let u64_hash = U64Hash::new(KeccakF {});
@@ -117,7 +117,7 @@ pub fn generate_proof(
 
     let pcs = Pcs::new(dft, val_mmcs, fri_params, 4, ChaCha20Rng::from_seed(*nonce));
 
-    let config = MyConfig::new(pcs, challenger);
+    let config = MerkleInclusionConfig::new(pcs, challenger);
 
     let proof = prove(&config, &air, trace, &public_values);
     (proof, public_values)
@@ -167,7 +167,7 @@ pub fn verify_proof(
 
     let pcs = Pcs::new(dft, val_mmcs, fri_params, 4, ChaCha20Rng::from_seed(*nonce));
 
-    let config = MyConfig::new(pcs, challenger);
+    let config = MerkleInclusionConfig::new(pcs, challenger);
 
     verify(&config, &air, proof, public_values)
 }
@@ -178,7 +178,8 @@ mod test {
 
     use crate::zkp::{nonce_field_rep, verify_proof};
 
-    use super::{Val, generate_proof};
+    use super::{MerkleInclusionConfig, Val, generate_proof, verify_proof};
+    use p3_uni_stark::Proof;
 
     #[test]
     fn test_root_independent_of_nonce() {
@@ -259,11 +260,32 @@ mod test {
 
         let dft = Dft::default();
         let pcs = Pcs::new(dft, val_mmcs, fri_params, 4, ChaCha20Rng::from_seed(nonce));
-        let config = MyConfig::new(pcs, challenger);
+        let config = MerkleInclusionConfig::new(pcs, challenger);
 
         // Produce proof committing to bogus PVs
         let proof = prove(&config, &air, trace, &public_bad);
 
         assert!(verify_proof(&nonce, &proof, &public_bad).is_err());
+    }
+
+    #[test]
+    fn proof_postcard_roundtrip_verifies() {
+        use postcard::{from_bytes, to_allocvec};
+        let leaf = [Val::from_canonical_checked(4).unwrap(); 8];
+        let neighbors = [([Val::from_canonical_checked(3).unwrap(); 8], false); 31];
+        let nonce = [5u8; 32];
+        let (proof, public_values) = generate_proof(&leaf, &neighbors, &nonce);
+        let bytes = to_allocvec(&proof).unwrap();
+        let proof2: Proof<MerkleInclusionConfig> = from_bytes(&bytes).unwrap();
+        verify_proof(&nonce, &proof2, &public_values).expect("verify after roundtrip");
+    }
+
+    #[test]
+    fn proof_verifies() {
+        let leaf = [Val::from_canonical_checked(4).unwrap(); 8];
+        let neighbors = [([Val::from_canonical_checked(3).unwrap(); 8], false); 31];
+        let nonce = [9u8; 32];
+        let (proof, public_values) = generate_proof(&leaf, &neighbors, &nonce);
+        verify_proof(&nonce, &proof, &public_values).expect("verify ok");
     }
 }

@@ -89,6 +89,7 @@ int main(int argc, char** argv) {
         memsnap_t base; read_memsnap(&base);
         unsigned char proof_buf[1<<19]; // 0.5 MiB demo buffer
         size_t proof_written = 0;
+        // zkp_generate_proof returns a postcard-serialized bundle: (proof, public_values)
         rc = zkp_generate_proof(args_buf,
                                 args_len,
                                 zkp_nonce,
