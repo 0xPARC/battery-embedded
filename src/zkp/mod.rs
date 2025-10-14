@@ -217,14 +217,36 @@ mod test {
 
     #[test]
     fn verifier_should_reject_inconsistent_nonce_public_values() {
+        // Build a valid proof first
+        let leaf = [Val::from_canonical_checked(4).unwrap(); 8];
+        let neighbors = [([Val::from_canonical_checked(3).unwrap(); 8], false); 31];
+        let nonce = [7u8; 32];
+        let (proof, public_values) = generate_proof(&leaf, &neighbors, &nonce);
+
+        // Tamper with the public values after proving: flip one value in the
+        // nonce field region or the hash(nonce||leaf) region. Either should fail.
+        let one = Val::from_canonical_checked(1).unwrap();
+
+        // Case 1: change nonce field rep (PV[8..16])
+        let mut pv_bad = public_values.clone();
+        pv_bad[8] = pv_bad[8] + one;
+        assert!(verify_proof(&nonce, &proof, &pv_bad).is_err());
+
+        // Case 2: change hash(nonce||leaf) (PV[16..24])
+        let mut pv_bad2 = public_values.clone();
+        pv_bad2[16] = pv_bad2[16] + one;
+        assert!(verify_proof(&nonce, &proof, &pv_bad2).is_err());
+    }
+
+    #[test]
+    fn forged_pv_should_fail_verification() {
         use super::*;
 
-        // Path with rows = 32 (levels = 31)
+        // Build prover config and trace, then deliberately forge PV.
         let leaf = [Val::from_canonical_checked(4).unwrap(); 8];
         let neighbors = [([Val::from_canonical_checked(3).unwrap(); 8], false); 31];
         let nonce = [7u8; 32];
 
-        // Build prover config (replicates generate_proof but we will inject bogus PVs)
         let byte_hash = ByteHash {};
         let u64_hash = U64Hash::new(KeccakF {});
         let field_hash = FieldHash::new(u64_hash);
@@ -247,12 +269,10 @@ mod test {
         let nonce_field = nonce_field_rep(&nonce);
         let trace = air.generate_trace_rows(&leaf, &neighbors, &nonce_field, fri_params.log_blowup);
 
-        // Correct root from last row
+        // Correct root from last row, but forge the other PV segments
         let root = trace.row_slice(trace.height() - 1).unwrap()
             [trace.width() - WIDTH..trace.width() - WIDTH + 8]
             .to_vec();
-
-        // Bogus PV: correct root, but wrong nonce field rep and hash(nonce||leaf)
         let zero = Val::from_canonical_checked(0).unwrap();
         let mut public_bad = root.clone();
         public_bad.extend_from_slice(&[zero; 8]);
@@ -262,9 +282,7 @@ mod test {
         let pcs = Pcs::new(dft, val_mmcs, fri_params, 4, ChaCha20Rng::from_seed(nonce));
         let config = MerkleInclusionConfig::new(pcs, challenger);
 
-        // Produce proof committing to bogus PVs
         let proof = prove(&config, &air, trace, &public_bad);
-
         assert!(verify_proof(&nonce, &proof, &public_bad).is_err());
     }
 
