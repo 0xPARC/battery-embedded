@@ -176,9 +176,8 @@ pub fn verify_proof(
 mod test {
     use p3_field::integers::QuotientMap;
 
-    use crate::zkp::{nonce_field_rep, verify_proof};
+    use crate::zkp::{MerkleInclusionConfig, Val, generate_proof, nonce_field_rep, verify_proof};
 
-    use super::{MerkleInclusionConfig, Val, generate_proof, verify_proof};
     use p3_uni_stark::Proof;
 
     #[test]
@@ -216,6 +215,7 @@ mod test {
         verify_proof(&nonce, &proof, &public_values).unwrap();
     }
 
+    #[test]
     fn verifier_should_reject_inconsistent_nonce_public_values() {
         use super::*;
 
