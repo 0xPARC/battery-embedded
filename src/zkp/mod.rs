@@ -2,14 +2,14 @@
 use p3_challenger::{HashChallenger, SerializingChallenger32};
 use p3_commit::ExtensionMmcs;
 use p3_field::{extension::BinomialExtensionField, integers::QuotientMap};
-use p3_fri::{create_benchmark_fri_params_zk, HidingFriPcs};
+use p3_fri::{HidingFriPcs, create_benchmark_fri_params_zk};
 use p3_keccak::{Keccak256Hash, KeccakF};
 use p3_koala_bear::{GenericPoseidon2LinearLayersKoalaBear, KoalaBear};
 use p3_matrix::Matrix;
 use p3_merkle_tree::MerkleTreeHidingMmcs;
 use p3_poseidon2::poseidon2_round_numbers_128;
 use p3_symmetric::{CompressionFunctionFromHasher, PaddingFreeSponge, SerializingHasher};
-use p3_uni_stark::{prove, verify, Proof, StarkConfig};
+use p3_uni_stark::{Proof, StarkConfig, prove, verify};
 use rand::SeedableRng;
 use rand_chacha::ChaCha20Rng;
 
@@ -103,6 +103,8 @@ pub fn generate_proof(
     let fri_params = create_benchmark_fri_params_zk(challenge_mmcs);
 
     let nonce_field = nonce_field_rep(nonce);
+    // Sanity: neighbors.len() + 1 must be power-of-two for the radix-2 FFTs
+    debug_assert!((neighbors.len() + 1).is_power_of_two());
     let trace = air.generate_trace_rows(leaf, neighbors, &nonce_field, fri_params.log_blowup);
     let mut public_values = trace.row_slice(trace.height() - 1).unwrap()
         [trace.width() - WIDTH..trace.width() - WIDTH + 8]
@@ -176,7 +178,7 @@ mod test {
 
     use crate::zkp::{nonce_field_rep, verify_proof};
 
-    use super::{generate_proof, Val};
+    use super::{Val, generate_proof};
 
     #[test]
     fn test_root_independent_of_nonce() {
@@ -211,5 +213,57 @@ mod test {
         let nonce = [0; 32];
         let (proof, public_values) = generate_proof(&leaf, &neighbors, &nonce);
         verify_proof(&nonce, &proof, &public_values).unwrap();
+    }
+
+    fn verifier_should_reject_inconsistent_nonce_public_values() {
+        use super::*;
+
+        // Path with rows = 32 (levels = 31)
+        let leaf = [Val::from_canonical_checked(4).unwrap(); 8];
+        let neighbors = [([Val::from_canonical_checked(3).unwrap(); 8], false); 31];
+        let nonce = [7u8; 32];
+
+        // Build prover config (replicates generate_proof but we will inject bogus PVs)
+        let byte_hash = ByteHash {};
+        let u64_hash = U64Hash::new(KeccakF {});
+        let field_hash = FieldHash::new(u64_hash);
+        let compress = MyCompress::new(u64_hash);
+        let mut rng = ChaCha20Rng::seed_from_u64(1);
+        let constants = RoundConstants::from_rng(&mut rng);
+        let val_mmcs = ValMmcs::new(field_hash, compress, rng);
+        let challenge_mmcs = ChallengeMmcs::new(val_mmcs.clone());
+        let challenger = Challenger::from_hasher(nonce.to_vec(), byte_hash);
+        let air = MerkleInclusionAir::<
+            Val,
+            PoseidonLayers,
+            SBOX_DEGREE,
+            SBOX_REGISTERS,
+            HALF_FULL_ROUNDS,
+            PARTIAL_ROUNDS,
+        >::new(constants);
+        let fri_params = create_benchmark_fri_params_zk(challenge_mmcs);
+
+        let nonce_field = nonce_field_rep(&nonce);
+        let trace = air.generate_trace_rows(&leaf, &neighbors, &nonce_field, fri_params.log_blowup);
+
+        // Correct root from last row
+        let root = trace.row_slice(trace.height() - 1).unwrap()
+            [trace.width() - WIDTH..trace.width() - WIDTH + 8]
+            .to_vec();
+
+        // Bogus PV: correct root, but wrong nonce field rep and hash(nonce||leaf)
+        let zero = Val::from_canonical_checked(0).unwrap();
+        let mut public_bad = root.clone();
+        public_bad.extend_from_slice(&[zero; 8]);
+        public_bad.extend_from_slice(&[zero; 8]);
+
+        let dft = Dft::default();
+        let pcs = Pcs::new(dft, val_mmcs, fri_params, 4, ChaCha20Rng::from_seed(nonce));
+        let config = MyConfig::new(pcs, challenger);
+
+        // Produce proof committing to bogus PVs
+        let proof = prove(&config, &air, trace, &public_bad);
+
+        assert!(verify_proof(&nonce, &proof, &public_bad).is_err());
     }
 }

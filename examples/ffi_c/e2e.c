@@ -54,7 +54,9 @@ int main(int argc, char** argv) {
     const char* mode = (argc > 1) ? argv[1] : "both"; // modes: "zkp", "tfhe", "both"
     // ZKP: generate public values (e.g., Merkle root)  and zk proof for a provided leaf & path
     // Use a compile-time constant to avoid VLA warnings
-    enum { LEVELS = 32 }; // demo depth
+    // The ZKP trace adds an initial row for hash(nonce||leaf),
+    // so `levels + 1` must be a power of two. For a depth-32 demo, pass 31 here.
+    enum { LEVELS = 31 }; // demo depth -> rows = 32
     uint32_t leaf8_u32[8];
     uint32_t neighbors8_by_level_u32[LEVELS * 8];
     uint8_t sides[LEVELS];

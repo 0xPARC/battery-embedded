@@ -144,6 +144,12 @@ pub extern "C" fn zkp_generate_proof(
     if levels == 0 || args.sides_bitflags.len() != levels {
         return BATTERY_ERR_INPUT;
     }
+    // The ZKP trace includes an extra first row for hash(nonce||leaf),
+    // so the prover requires (levels + 1) to be a power of two.
+    let rows = levels + 1;
+    if !rows.is_power_of_two() {
+        return BATTERY_ERR_INPUT;
+    }
     let nonce = unsafe { core::slice::from_raw_parts(nonce32, BATTERY_NONCE_LEN) };
     let mut nonce_arr = [0u8; BATTERY_NONCE_LEN];
     nonce_arr.copy_from_slice(nonce);
@@ -174,7 +180,9 @@ pub extern "C" fn zkp_generate_proof(
         return BATTERY_ERR_INPUT;
     }
     let (proof, public_values) = zkp::generate_proof(&leaf, &neighbors, &nonce_arr);
-    if public_values.len() != zkp::HASH_SIZE {
+    // Public values now include: root (8), nonce field rep (8), and hash(nonce||leaf) (8).
+    // Only the first 8 are constrained by the AIR here, so just sanity-check the minimum.
+    if public_values.len() < zkp::HASH_SIZE {
         return BATTERY_ERR_INPUT;
     }
     let out_bytes = unsafe { core::slice::from_raw_parts_mut(proof_out, proof_out_len) };
@@ -386,8 +394,9 @@ mod tests {
 
     #[test]
     fn zkp_proof_buf_too_small() {
-        // Pack args and then request proof with zero-sized buffer
-        let levels = 4usize;
+        // Pack args and then request proof with zero-sized buffer.
+        // Trace rows = levels + 1 must be a power of two.
+        let levels = 31usize; // rows = 32
         let leaf = [4u32; 8];
         let neighbors = vec![3u32; levels * 8];
         let sides = vec![0u8; levels];
