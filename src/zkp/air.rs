@@ -138,6 +138,10 @@ impl<
                 HALF_FULL_ROUNDS,
                 PARTIAL_ROUNDS,
             >(hash_slice_maybe_uninit.borrow_mut(), state, &self.constants);
+            // For some reason, Poseidon2Cols has an `export` field that is always
+            // set to 1 by the generator and ignored by the eval.  We instead use
+            // this field for the row number.
+            hash_slice[0] = F::from_int(row_num);
         }
         RowMajorMatrix::new(vec, cols)
     }
@@ -165,19 +169,24 @@ impl<
         let local = main.row_slice(0).unwrap();
         let next = main.row_slice(1).unwrap();
         let (inputs, hash) = local.split_at(HASH_OFFSET);
-        builder.assert_one(hash[0]);
+        // We need a selector for "transition but not first row".
+        // For some reason, builder.first_row() is not 1 in the first row,
+        // so using 1 - builder.first_row() won't work.
+        // Instead, we store the row number in local[HASH_OFFSET] = hash[0].
+        builder.when_first_row().assert_zero(hash[0]);
+        builder
+            .when_transition()
+            .assert_one(next[HASH_OFFSET] - hash[0]);
         let selector = inputs[HASH_SIZE_2];
-        let one_minus_selector = hash[0] - selector;
+        let one_minus_selector = AB::Expr::from(AB::F::ONE) - selector;
         builder.assert_zero(selector * one_minus_selector);
         // Force the first selector to be zero; otherwise it's easy to construct 2 valid proofs
         builder.when_first_row().assert_zero(selector);
         builder.when_first_row().assert_zero(next[HASH_SIZE_2]);
-        let transition_not_first_row =
-            builder.is_transition() * (AB::Expr::from(AB::F::ONE) - builder.is_first_row());
+        let transition_not_first_row = builder.is_transition() * hash[0];
         for i in 0..HASH_SIZE {
             // The offset of 1 is due to the `export` field in `Poseidon2Cols`.
-            // The `eval_poseidon2` function does not seem to care about it.
-            // The generator always fills this field with 1.
+            // We are using it to store the row number.
             let left = (inputs[i] - inputs[i + HASH_SIZE]) * selector + inputs[i + HASH_SIZE];
             builder.assert_eq(hash[i + 1], left);
             builder.assert_eq(

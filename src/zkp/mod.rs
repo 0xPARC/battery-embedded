@@ -2,14 +2,14 @@
 use p3_challenger::{HashChallenger, SerializingChallenger32};
 use p3_commit::ExtensionMmcs;
 use p3_field::{extension::BinomialExtensionField, integers::QuotientMap};
-use p3_fri::{HidingFriPcs, create_benchmark_fri_params_zk};
+use p3_fri::{create_benchmark_fri_params_zk, HidingFriPcs};
 use p3_keccak::{Keccak256Hash, KeccakF};
 use p3_koala_bear::{GenericPoseidon2LinearLayersKoalaBear, KoalaBear};
 use p3_matrix::Matrix;
 use p3_merkle_tree::MerkleTreeHidingMmcs;
 use p3_poseidon2::poseidon2_round_numbers_128;
 use p3_symmetric::{CompressionFunctionFromHasher, PaddingFreeSponge, SerializingHasher};
-use p3_uni_stark::{Proof, StarkConfig, prove, verify};
+use p3_uni_stark::{prove, verify, Proof, StarkConfig};
 use rand::SeedableRng;
 use rand_chacha::ChaCha20Rng;
 
@@ -174,9 +174,9 @@ pub fn verify_proof(
 mod test {
     use p3_field::integers::QuotientMap;
 
-    use crate::zkp::nonce_field_rep;
+    use crate::zkp::{nonce_field_rep, verify_proof};
 
-    use super::{Val, generate_proof};
+    use super::{generate_proof, Val};
 
     #[test]
     fn test_root_independent_of_nonce() {
@@ -192,5 +192,24 @@ mod test {
         assert_eq!(public1[8..16], nonce_field1);
         assert_eq!(public2[8..16], nonce_field2);
         assert_ne!(public1[16..24], public2[16..24]);
+    }
+
+    #[test]
+    fn test_verify_proof_1() {
+        let leaf = [Val::from_canonical_checked(4).unwrap(); 8];
+        let neighbors = [([Val::from_canonical_checked(3).unwrap(); 8], false); 31];
+        let nonce = [0; 32];
+        let (proof, public_values) = generate_proof(&leaf, &neighbors, &nonce);
+        verify_proof(&nonce, &proof, &public_values).unwrap();
+    }
+
+    #[test]
+    fn test_verify_proof_2() {
+        let leaf = [Val::from_canonical_checked(4).unwrap(); 8];
+        let mut neighbors = [([Val::from_canonical_checked(3).unwrap(); 8], true); 31];
+        neighbors[0].1 = false;
+        let nonce = [0; 32];
+        let (proof, public_values) = generate_proof(&leaf, &neighbors, &nonce);
+        verify_proof(&nonce, &proof, &public_values).unwrap();
     }
 }
