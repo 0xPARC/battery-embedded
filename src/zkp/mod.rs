@@ -175,10 +175,60 @@ pub fn verify_proof(
 #[cfg(test)]
 mod test {
     use p3_field::integers::QuotientMap;
+    use p3_matrix::dense::RowMajorMatrix;
 
-    use crate::zkp::{MerkleInclusionConfig, Val, generate_proof, nonce_field_rep, verify_proof};
+    use super::*;
 
-    use p3_uni_stark::Proof;
+    type TestAir = MerkleInclusionAir<
+        Val,
+        PoseidonLayers,
+        SBOX_DEGREE,
+        SBOX_REGISTERS,
+        HALF_FULL_ROUNDS,
+        PARTIAL_ROUNDS,
+    >;
+
+    fn build_fixture(
+        leaf: &[Val; 8],
+        neighbors: &[([Val; 8], bool)],
+        nonce: &[u8; 32],
+    ) -> (
+        MerkleInclusionConfig,
+        TestAir,
+        RowMajorMatrix<Val>,
+        Vec<Val>,
+    ) {
+        let byte_hash = ByteHash {};
+        let u64_hash = U64Hash::new(KeccakF {});
+        let field_hash = FieldHash::new(u64_hash);
+        let compress = MyCompress::new(u64_hash);
+        let mut rng = rand_chacha::ChaCha20Rng::seed_from_u64(1);
+        let constants = RoundConstants::from_rng(&mut rng);
+        let val_mmcs = ValMmcs::new(field_hash, compress, rng);
+        let challenge_mmcs = ChallengeMmcs::new(val_mmcs.clone());
+        let challenger = Challenger::from_hasher(nonce.to_vec(), byte_hash);
+        let air = TestAir::new(constants);
+        let fri_params = create_benchmark_fri_params_zk(challenge_mmcs);
+        let log_blowup = fri_params.log_blowup;
+        let dft = Dft::default();
+        let pcs = Pcs::new(
+            dft,
+            val_mmcs,
+            fri_params,
+            4,
+            rand_chacha::ChaCha20Rng::from_seed(*nonce),
+        );
+        let config = MerkleInclusionConfig::new(pcs, challenger);
+
+        let nonce_field = nonce_field_rep(nonce);
+        let trace = air.generate_trace_rows(leaf, neighbors, &nonce_field, log_blowup);
+        let mut pv = trace.row_slice(trace.height() - 1).unwrap()
+            [trace.width() - WIDTH..trace.width() - WIDTH + HASH_SIZE]
+            .to_vec();
+        pv.extend_from_slice(&nonce_field);
+        pv.extend_from_slice(&trace.values[trace.width - WIDTH..trace.width - WIDTH + HASH_SIZE]);
+        (config, air, trace, pv)
+    }
 
     #[test]
     fn test_root_independent_of_nonce() {
@@ -239,51 +289,36 @@ mod test {
     }
 
     #[test]
-    fn forged_pv_should_fail_verification() {
-        use super::*;
-
-        // Build prover config and trace, then deliberately forge PV.
+    #[should_panic]
+    fn prove_fails_when_forging_root() {
         let leaf = [Val::from_canonical_checked(4).unwrap(); 8];
         let neighbors = [([Val::from_canonical_checked(3).unwrap(); 8], false); 31];
         let nonce = [7u8; 32];
+        let (config, air, trace, mut pv) = build_fixture(&leaf, &neighbors, &nonce);
+        pv[0] = pv[0] + Val::from_canonical_checked(1).unwrap();
+        let _ = prove(&config, &air, trace, &pv);
+    }
 
-        let byte_hash = ByteHash {};
-        let u64_hash = U64Hash::new(KeccakF {});
-        let field_hash = FieldHash::new(u64_hash);
-        let compress = MyCompress::new(u64_hash);
-        let mut rng = ChaCha20Rng::seed_from_u64(1);
-        let constants = RoundConstants::from_rng(&mut rng);
-        let val_mmcs = ValMmcs::new(field_hash, compress, rng);
-        let challenge_mmcs = ChallengeMmcs::new(val_mmcs.clone());
-        let challenger = Challenger::from_hasher(nonce.to_vec(), byte_hash);
-        let air = MerkleInclusionAir::<
-            Val,
-            PoseidonLayers,
-            SBOX_DEGREE,
-            SBOX_REGISTERS,
-            HALF_FULL_ROUNDS,
-            PARTIAL_ROUNDS,
-        >::new(constants);
-        let fri_params = create_benchmark_fri_params_zk(challenge_mmcs);
+    #[test]
+    #[should_panic]
+    fn prove_fails_when_forging_nonce_field() {
+        let leaf = [Val::from_canonical_checked(4).unwrap(); 8];
+        let neighbors = [([Val::from_canonical_checked(3).unwrap(); 8], false); 31];
+        let nonce = [7u8; 32];
+        let (config, air, trace, mut pv) = build_fixture(&leaf, &neighbors, &nonce);
+        pv[8] = pv[8] + Val::from_canonical_checked(1).unwrap();
+        let _ = prove(&config, &air, trace, &pv);
+    }
 
-        let nonce_field = nonce_field_rep(&nonce);
-        let trace = air.generate_trace_rows(&leaf, &neighbors, &nonce_field, fri_params.log_blowup);
-
-        // Correct root from last row, but forge the other PV segments
-        let root = trace.row_slice(trace.height() - 1).unwrap()
-            [trace.width() - WIDTH..trace.width() - WIDTH + 8]
-            .to_vec();
-        let zero = Val::from_canonical_checked(0).unwrap();
-        let mut public_bad = root.clone();
-        public_bad.extend_from_slice(&[zero; 8]);
-        public_bad.extend_from_slice(&[zero; 8]);
-
-        let dft = Dft::default();
-        let pcs = Pcs::new(dft, val_mmcs, fri_params, 4, ChaCha20Rng::from_seed(nonce));
-        let config = MerkleInclusionConfig::new(pcs, challenger);
-
-        let proof = prove(&config, &air, trace, &public_bad);
-        assert!(verify_proof(&nonce, &proof, &public_bad).is_err());
+    #[test]
+    #[should_panic]
+    fn prove_fails_when_forging_hash() {
+        let leaf = [Val::from_canonical_checked(4).unwrap(); 8];
+        let neighbors = [([Val::from_canonical_checked(3).unwrap(); 8], false); 31];
+        let nonce = [7u8; 32];
+        let (config, air, trace, mut pv) = build_fixture(&leaf, &neighbors, &nonce);
+        pv[16] = pv[16] + Val::from_canonical_checked(1).unwrap();
+        let _ = prove(&config, &air, trace, &pv);
     }
 
     #[test]
