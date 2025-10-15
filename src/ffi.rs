@@ -1,5 +1,6 @@
 use super::Vec;
 use crate::aes_ctr::aes_ctr_encrypt_in_place;
+use crate::poly::Poly;
 use crate::tfhe::encode_bits_as_trlwe_plaintext;
 use crate::tfhe::{TFHEPublicKey, TRLWECiphertext};
 use crate::zkp::{self, Val};
@@ -36,16 +37,10 @@ pub extern "C" fn battery_api_version() -> u32 {
 
 // ------------- TFHE -------------
 
-/// Encrypt an AES-128 key using an opaque serialized public key.
-/// Inputs:
-/// - `pk`/`pk_len`: postcard-serialized `TFHEPublicKey` for current params.
-/// - `aes_key16` (len=`AES_KEY_LEN`)
-/// - `seed32` (len=`BATTERY_SEED_LEN`)
-/// Outputs:
-/// - `ct_out`/`ct_out_len`: caller-provided buffer for postcard-serialized `TRLWECiphertext`.
-/// - `out_written`: number of bytes written. If too small, returns `BATTERY_ERR_BUFSZ`.
-///
-/// Serialization: postcard 1.x (stable).
+/// DEPRECATED: use `tfhe_pk_encrypt` for arbitrary-length byte payloads.
+/// This wrapper now forwards to `tfhe_pk_encrypt` with `bytes_len = AES_KEY_LEN`.
+/// Inputs/outputs are unchanged and remain opaque postcard buffers.
+#[deprecated(note = "Use tfhe_pk_encrypt for arbitrary payloads")]
 #[unsafe(no_mangle)]
 pub extern "C" fn tfhe_pk_encrypt_aes_key(
     pk: *const u8,
@@ -57,8 +52,36 @@ pub extern "C" fn tfhe_pk_encrypt_aes_key(
     ct_out_len: usize,
     out_written: *mut usize,
 ) -> i32 {
+    tfhe_pk_encrypt(
+        pk,
+        pk_len,
+        aes_key16,
+        AES_KEY_LEN,
+        seed32,
+        seed_len,
+        ct_out,
+        ct_out_len,
+        out_written,
+    )
+}
+
+/// Encrypt an arbitrary byte string by encoding its bits LSB-first into a TRLWE plaintext
+/// and encrypting it with the TFHE public key. The number of encoded bits is `bytes_len * 8`.
+/// Fails if `bytes_len * 8 > TFHE_TRLWE_N`.
+#[unsafe(no_mangle)]
+pub extern "C" fn tfhe_pk_encrypt(
+    pk: *const u8,
+    pk_len: usize,
+    bytes: *const u8,
+    bytes_len: usize,
+    seed32: *const u8,
+    seed_len: usize,
+    ct_out: *mut u8,
+    ct_out_len: usize,
+    out_written: *mut usize,
+) -> i32 {
     if pk.is_null()
-        || aes_key16.is_null()
+        || bytes.is_null()
         || seed32.is_null()
         || ct_out.is_null()
         || out_written.is_null()
@@ -68,17 +91,26 @@ pub extern "C" fn tfhe_pk_encrypt_aes_key(
     if seed_len != BATTERY_SEED_LEN {
         return BATTERY_ERR_SEEDLEN;
     }
+    // Check capacity
+    let bit_len = bytes_len.saturating_mul(8);
+    if bit_len > TFHE_TRLWE_N {
+        return BATTERY_ERR_BADLEN;
+    }
+    // Deserialize PK
     let pk_bytes = unsafe { core::slice::from_raw_parts(pk, pk_len) };
     let pk: TFHEPublicKey<TFHE_TRLWE_N, Q> = match postcard::from_bytes(pk_bytes) {
         Ok(v) => v,
         Err(_) => return BATTERY_ERR_INPUT,
     };
+    // Build plaintext from bytes
+    let data = unsafe { core::slice::from_raw_parts(bytes, bytes_len) };
+    let pt_poly = encode_bits_as_trlwe_plaintext::<TFHE_TRLWE_N, Q>(data, bit_len);
+    // RNG
     let seed = unsafe { core::slice::from_raw_parts(seed32, BATTERY_SEED_LEN) };
     let mut seed_arr = [0u8; BATTERY_SEED_LEN];
     seed_arr.copy_from_slice(seed);
     let mut rng = ChaCha20Rng::from_seed(seed_arr);
-    let key = unsafe { &*(aes_key16 as *const [u8; AES_KEY_LEN]) };
-    let pt_poly = encode_bits_as_trlwe_plaintext::<TFHE_TRLWE_N, Q>(key, AES_KEY_LEN * 8);
+    // Encrypt
     let ct_obj = TRLWECiphertext::<TFHE_TRLWE_N, Q>::encrypt_with_public_key::<_, ERR_B>(
         &pt_poly, &pk, &mut rng,
     );
@@ -91,18 +123,15 @@ pub extern "C" fn tfhe_pk_encrypt_aes_key(
             }
             BATTERY_OK
         }
-        Err(_) => {
-            // Fallback: compute required size without copying on success path
-            match postcard::to_allocvec(&ct_obj) {
-                Ok(bytes) => {
-                    unsafe {
-                        *out_written = bytes.len();
-                    }
-                    BATTERY_ERR_BUFSZ
+        Err(_) => match postcard::to_allocvec(&ct_obj) {
+            Ok(bytes) => {
+                unsafe {
+                    *out_written = bytes.len();
                 }
-                Err(_) => BATTERY_ERR_INPUT,
+                BATTERY_ERR_BUFSZ
             }
-        }
+            Err(_) => BATTERY_ERR_INPUT,
+        },
     }
 }
 
@@ -258,10 +287,10 @@ pub extern "C" fn tfhe_pack_public_key(
     }
     let a_slice = unsafe { core::slice::from_raw_parts(pk_a, TFHE_TRLWE_N) };
     let b_slice = unsafe { core::slice::from_raw_parts(pk_b, TFHE_TRLWE_N) };
-    let a = crate::poly::Poly::<TFHE_TRLWE_N, Q>::from_coeffs_mod_q_slice(a_slice);
-    let b = crate::poly::Poly::<TFHE_TRLWE_N, Q>::from_coeffs_mod_q_slice(b_slice);
-    let pk = crate::tfhe::TFHEPublicKey::<TFHE_TRLWE_N, Q> {
-        ct: crate::tfhe::TRLWECiphertext { a, b },
+    let a = Poly::<TFHE_TRLWE_N, Q>::from_coeffs_mod_q_slice(a_slice);
+    let b = Poly::<TFHE_TRLWE_N, Q>::from_coeffs_mod_q_slice(b_slice);
+    let pk = TFHEPublicKey::<TFHE_TRLWE_N, Q> {
+        ct: TRLWECiphertext { a, b },
     };
     let out_bytes = unsafe { core::slice::from_raw_parts_mut(out, out_len) };
     match postcard::to_slice(&pk, out_bytes) {
@@ -374,10 +403,8 @@ mod tests {
     #[test]
     fn tfhe_encrypt_buf_too_small() {
         // Build a minimal pk
-        let a =
-            crate::poly::Poly::<TFHE_TRLWE_N, Q>::from_coeffs_mod_q_slice(&[0u64; TFHE_TRLWE_N]);
-        let b =
-            crate::poly::Poly::<TFHE_TRLWE_N, Q>::from_coeffs_mod_q_slice(&[0u64; TFHE_TRLWE_N]);
+        let a = Poly::<TFHE_TRLWE_N, Q>::from_coeffs_mod_q_slice(&[0u64; TFHE_TRLWE_N]);
+        let b = Poly::<TFHE_TRLWE_N, Q>::from_coeffs_mod_q_slice(&[0u64; TFHE_TRLWE_N]);
         let pk = TFHEPublicKey::<TFHE_TRLWE_N, Q> {
             ct: TRLWECiphertext { a, b },
         };
@@ -386,10 +413,11 @@ mod tests {
         let seed = [7u8; BATTERY_SEED_LEN];
         let mut out_written = 0usize;
         let mut dummy: u8 = 0;
-        let rc = tfhe_pk_encrypt_aes_key(
+        let rc = tfhe_pk_encrypt(
             pk_bytes.as_ptr(),
             pk_bytes.len(),
             aes_key.as_ptr(),
+            AES_KEY_LEN,
             seed.as_ptr(),
             BATTERY_SEED_LEN,
             &mut dummy as *mut u8,

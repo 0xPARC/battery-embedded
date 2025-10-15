@@ -1,6 +1,7 @@
 /target
 
 # C example build artifacts
-/examples/ffi_c/e2e
-/examples/ffi_c/*.o
+/examples/e2e/e2e
+/examples/tfhe_u8_bench/bench_u8
+/examples/**/*.o
 
