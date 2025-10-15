@@ -45,7 +45,6 @@ type PoseidonLayers = GenericPoseidon2LinearLayersKoalaBear;
 type Dft = p3_dft::Radix2Dit<Val>;
 type Challenge = BinomialExtensionField<Val, 4>;
 type Pcs = HidingFriPcs<Val, Dft, ValMmcs, ChallengeMmcs, ChaCha20Rng>;
-pub type MerkleInclusionConfig = StarkConfig<Pcs, Challenge, Challenger>;
 type ChallengeMmcs = ExtensionMmcs<Val, Challenge, ValMmcs>;
 type Challenger = SerializingChallenger32<Val, HashChallenger<u8, ByteHash, 32>>;
 type ByteHash = Keccak256Hash;
@@ -62,6 +61,9 @@ type ValMmcs = MerkleTreeHidingMmcs<
     4,
 >;
 
+pub type MerkleInclusionConfig = StarkConfig<Pcs, Challenge, Challenger>;
+pub type MerkleInclusionProof = Proof<MerkleInclusionConfig>;
+
 pub fn nonce_field_rep(nonce: &[u8; 32]) -> [Val; 8] {
     core::array::from_fn(|i| {
         Val::from_int(u32::from_le_bytes(
@@ -74,7 +76,7 @@ pub fn generate_proof(
     leaf: &[Val; 8],
     neighbors: &[([Val; 8], bool)],
     nonce: &[u8; 32],
-) -> (Proof<MerkleInclusionConfig>, Vec<Val>) {
+) -> (MerkleInclusionProof, Vec<Val>) {
     let byte_hash = ByteHash {};
 
     let u64_hash = U64Hash::new(KeccakF {});
@@ -125,7 +127,7 @@ pub fn generate_proof(
 
 pub fn verify_proof(
     nonce: &[u8; 32],
-    proof: &Proof<StarkConfig<Pcs, Challenge, Challenger>>,
+    proof: &MerkleInclusionProof,
     public_values: &Vec<Val>,
 ) -> Result<
     (),
@@ -329,7 +331,7 @@ mod test {
         let nonce = [5u8; 32];
         let (proof, public_values) = generate_proof(&leaf, &neighbors, &nonce);
         let bytes = to_allocvec(&proof).unwrap();
-        let proof2: Proof<MerkleInclusionConfig> = from_bytes(&bytes).unwrap();
+        let proof2: MerkleInclusionProof = from_bytes(&bytes).unwrap();
         verify_proof(&nonce, &proof2, &public_values).expect("verify after roundtrip");
     }
 

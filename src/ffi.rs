@@ -3,8 +3,7 @@ use crate::aes_ctr::aes_ctr_encrypt_in_place;
 use crate::poly::Poly;
 use crate::tfhe::encode_bits_as_trlwe_plaintext;
 use crate::tfhe::{TFHEPublicKey, TRLWECiphertext};
-use crate::zkp::{self, Val};
-use p3_uni_stark::Proof;
+use crate::zkp::{self, MerkleInclusionProof, Val};
 
 use p3_field::integers::QuotientMap;
 use rand::SeedableRng;
@@ -139,7 +138,7 @@ pub extern "C" fn tfhe_pk_encrypt(
 
 #[derive(serde::Serialize, serde::Deserialize)]
 struct ZkpProofBundle(
-    Proof<zkp::MerkleInclusionConfig>,
+    MerkleInclusionProof,
     Vec<Val>, // public values layout: [root(8) | nonce_field(8) | hash(nonce||leaf)(8)]
 );
 
