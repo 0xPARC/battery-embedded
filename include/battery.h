@@ -44,16 +44,9 @@ void rust_eh_personality(void);
 uint32_t battery_api_version(void);
 
 /**
- * Encrypt an AES-128 key using an opaque serialized public key.
- * Inputs:
- * - `pk`/`pk_len`: postcard-serialized `TFHEPublicKey` for current params.
- * - `aes_key16` (len=`AES_KEY_LEN`)
- * - `seed32` (len=`BATTERY_SEED_LEN`)
- * Outputs:
- * - `ct_out`/`ct_out_len`: caller-provided buffer for postcard-serialized `TRLWECiphertext`.
- * - `out_written`: number of bytes written. If too small, returns `BATTERY_ERR_BUFSZ`.
- *
- * Serialization: postcard 1.x (stable).
+ * DEPRECATED: use `tfhe_pk_encrypt` for arbitrary-length byte payloads.
+ * This wrapper now forwards to `tfhe_pk_encrypt` with `bytes_len = AES_KEY_LEN`.
+ * Inputs/outputs are unchanged and remain opaque postcard buffers.
  */
 int32_t tfhe_pk_encrypt_aes_key(const uint8_t *pk,
                                 size_t pk_len,
@@ -63,6 +56,21 @@ int32_t tfhe_pk_encrypt_aes_key(const uint8_t *pk,
                                 uint8_t *ct_out,
                                 size_t ct_out_len,
                                 size_t *out_written);
+
+/**
+ * Encrypt an arbitrary byte string by encoding its bits LSB-first into a TRLWE plaintext
+ * and encrypting it with the TFHE public key. The number of encoded bits is `bytes_len * 8`.
+ * Fails if `bytes_len * 8 > TFHE_TRLWE_N`.
+ */
+int32_t tfhe_pk_encrypt(const uint8_t *pk,
+                        size_t pk_len,
+                        const uint8_t *bytes,
+                        size_t bytes_len,
+                        const uint8_t *seed32,
+                        size_t seed_len,
+                        uint8_t *ct_out,
+                        size_t ct_out_len,
+                        size_t *out_written);
 
 /**
  * Generate a Merkle-path ZK proof using a single opaque serialized argument, with a separate nonce.

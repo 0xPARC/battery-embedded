@@ -148,11 +148,11 @@ int main(int argc, char** argv) {
 
         // Baseline before TFHE encrypt
         memsnap_t base; read_memsnap(&base);
-        printf("[info] Encrypting AES key with TFHE PK...\n");
-        rc = tfhe_pk_encrypt_aes_key(pk_buf, pk_len, aes_key, seed, BATTERY_SEED_LEN,
+        printf("[info] Encrypting AES key (generic tfhe_pk_encrypt)...\n");
+        rc = tfhe_pk_encrypt(pk_buf, pk_len, aes_key, AES_KEY_LEN, seed, BATTERY_SEED_LEN,
                                      ct_buf, sizeof ct_buf, &ct_written);
         if (rc != BATTERY_OK) {
-            fprintf(stderr, "tfhe_pk_encrypt_aes_key failed: %s (%d)\n", battery_strerror(rc), rc);
+            fprintf(stderr, "tfhe_pk_encrypt failed: %s (%d)\n", battery_strerror(rc), rc);
             return 1;
         }
         printf("[info] CT (postcard) length: %zu bytes\n", ct_written);
