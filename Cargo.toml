@@ -19,10 +19,8 @@ ffi = ["alloc"]          # C FFI bindings
 opt-level = 3
 lto = "thin"
 codegen-units = 1
-strip = "symbols"
-debug = 1
-# overflow-checks = false
-# debug-assertions = false
+strip = true
+incremental = false
 panic = "abort"
 
 [dependencies]

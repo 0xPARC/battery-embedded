@@ -249,6 +249,29 @@ mod test {
     }
 
     #[test]
+    fn test_hash_nonce_leaf_independent_of_neighbors() {
+        // Keeping leaf and nonce constant while changing neighbors should:
+        // - Change the Merkle root (PV[0..8])
+        // - Keep the nonce field rep the same (PV[8..16])
+        // - Keep hash(nonce||leaf) the same (PV[16..24])
+        let leaf = [Val::from_canonical_checked(4).unwrap(); 8];
+        let neighbors1 = [([Val::from_canonical_checked(3).unwrap(); 8], false); 31];
+        let mut neighbors2 = [([Val::from_canonical_checked(5).unwrap(); 8], true); 31];
+        neighbors2[0].1 = false; // small variation in side flags
+        let nonce = [7u8; 32];
+
+        let (_, public1) = generate_proof(&leaf, &neighbors1, &nonce);
+        let (_, public2) = generate_proof(&leaf, &neighbors2, &nonce);
+
+        // Nonce field rep identical
+        assert_eq!(&public1[8..16], &public2[8..16]);
+        // hash(nonce||leaf) identical
+        assert_eq!(&public1[16..24], &public2[16..24]);
+        // Merkle root should differ when neighbors differ
+        assert_ne!(&public1[0..8], &public2[0..8]);
+    }
+
+    #[test]
     fn test_verify_proof_1() {
         let leaf = [Val::from_canonical_checked(4).unwrap(); 8];
         let neighbors = [([Val::from_canonical_checked(3).unwrap(); 8], false); 31];

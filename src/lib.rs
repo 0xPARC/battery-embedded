@@ -7,7 +7,6 @@ extern crate std;
 extern crate alloc;
 
 pub mod aes_ctr;
-pub mod poly;
 pub mod tfhe;
 
 #[cfg(any(feature = "std", feature = "alloc"))]
