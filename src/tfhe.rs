@@ -60,7 +60,7 @@ impl<const N: usize, const Q: u64> TRLWECiphertext<N, Q> {
         fused_mul_negacyclic_mod2k::<N, Q, B, R>(&pk.a, &pk.b, &mut acc_a, &mut acc_b, rng);
 
         // 2) Add plaintext bits strictly into b's accumulator
-        add_bits_direct::<N, Q>(&mut acc_b, bytes, bit_len);
+        add_bits::<N, Q>(&mut acc_b, bytes, bit_len);
 
         // 3) Add noise e1,e2 on the fly and store ciphertext (mod 2^k)
         let mut a_out = [0u64; N];
@@ -75,16 +75,10 @@ impl<const N: usize, const Q: u64> TRLWECiphertext<N, Q> {
     }
 }
 
-impl<const N: usize, const Q: u64> TFHEPublicKey<N, Q> {}
-
-// ---------------- Minimal helpers (production) ----------------
-
 /// Add a small signed integer in [-B,B] to x modulo 2^k (mask reduction).
 #[inline(always)]
 fn add_signed_mod<const Q: u64>(x: u64, e: i16) -> u64 {
-    {
-        assert!(Q.is_power_of_two());
-    }
+    const { assert!(Q.is_power_of_two()) };
     let mask = Q - 1;
     if e >= 0 {
         (x + (e as u64)) & mask
@@ -164,11 +158,7 @@ fn fused_mul_negacyclic_mod2k<const N: usize, const Q: u64, const B: i32, R: Rng
 }
 
 #[inline]
-fn add_bits_direct<const N: usize, const Q: u64>(
-    acc_b: &mut [u64; N],
-    bytes: &[u8],
-    bit_len: usize,
-) {
+fn add_bits<const N: usize, const Q: u64>(acc_b: &mut [u64; N], bytes: &[u8], bit_len: usize) {
     const { assert!((Q & 3) == 0) };
     let one = Q / 4;
     for i in 0..bit_len {
@@ -205,21 +195,6 @@ mod tests {
     fn mul_mod<const Q: u64>(x: u64, y: u64) -> u64 {
         const { assert!(Q.is_power_of_two()) };
         x.wrapping_mul(y) & (Q - 1)
-    }
-
-    // ----- Test-only poly helpers -----
-    #[inline]
-    fn poly_add_assign<const N: usize, const Q: u64>(dst: &mut [u64; N], src: &[u64; N]) {
-        for i in 0..N {
-            dst[i] = add_mod::<Q>(dst[i], src[i]);
-        }
-    }
-
-    #[inline]
-    fn poly_sub_assign<const N: usize, const Q: u64>(dst: &mut [u64; N], src: &[u64; N]) {
-        for i in 0..N {
-            dst[i] = sub_mod::<Q>(dst[i], src[i]);
-        }
     }
 
     // Schoolbook negacyclic mul
@@ -273,7 +248,9 @@ mod tests {
         pub fn decrypt(&self, sk: &TFHESecretKey<N, Q>) -> [u64; N] {
             let as_prod = poly_mul_negacyclic::<N, Q>(&self.a, &sk.s);
             let mut out = self.b.clone();
-            poly_add_assign::<N, Q>(&mut out, &as_prod);
+            for i in 0..N {
+                out[i] = add_mod::<Q>(out[i], as_prod[i]);
+            }
             out
         }
     }
@@ -283,7 +260,9 @@ mod tests {
             let a = poly_uniform::<N, Q, R>(rng);
             let mut e = poly_error::<N, Q, R, B>(rng);
             let as_prod = poly_mul_negacyclic::<N, Q>(&a, &self.s);
-            poly_sub_assign::<N, Q>(&mut e, &as_prod);
+            for i in 0..N {
+                e[i] = sub_mod::<Q>(e[i], as_prod[i]);
+            }
             TFHEPublicKey { a, b: e }
         }
     }
