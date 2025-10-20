@@ -1,7 +1,5 @@
 use super::Vec;
 use crate::aes_ctr::aes_ctr_encrypt_in_place;
-use crate::poly::Poly;
-use crate::tfhe::encode_bits_as_trlwe_plaintext;
 use crate::tfhe::{TFHEPublicKey, TRLWECiphertext};
 use crate::zkp::{self, MerkleInclusionProof, Val};
 
@@ -12,7 +10,7 @@ use rand_chacha::ChaCha20Rng;
 // Public constants for FFI
 pub const TFHE_TRLWE_N: usize = 1024;
 const Q: u64 = 1 << 50;
-const ERR_B: u64 = 1 << 12;
+const ERR_B: i32 = 1 << 12;
 
 // Unified FFI status and size constants (project‑wide)
 pub const BATTERY_OK: i32 = 0;
@@ -101,17 +99,19 @@ pub extern "C" fn tfhe_pk_encrypt(
         Ok(v) => v,
         Err(_) => return BATTERY_ERR_INPUT,
     };
-    // Build plaintext from bytes
+    // Get data to encrypt
     let data = unsafe { core::slice::from_raw_parts(bytes, bytes_len) };
-    let pt_poly = encode_bits_as_trlwe_plaintext::<TFHE_TRLWE_N, Q>(data, bit_len);
     // RNG
     let seed = unsafe { core::slice::from_raw_parts(seed32, BATTERY_SEED_LEN) };
     let mut seed_arr = [0u8; BATTERY_SEED_LEN];
     seed_arr.copy_from_slice(seed);
     let mut rng = ChaCha20Rng::from_seed(seed_arr);
     // Encrypt
-    let ct_obj = TRLWECiphertext::<TFHE_TRLWE_N, Q>::encrypt_with_public_key::<_, ERR_B>(
-        &pt_poly, &pk, &mut rng,
+    let ct_obj = TRLWECiphertext::<TFHE_TRLWE_N, Q>::encrypt_bits::<_, ERR_B>(
+        &data,
+        bytes_len * 8,
+        &pk,
+        &mut rng,
     );
     let out_bytes = unsafe { core::slice::from_raw_parts_mut(ct_out, ct_out_len) };
     match postcard::to_slice(&ct_obj, out_bytes) {
@@ -286,11 +286,9 @@ pub extern "C" fn tfhe_pack_public_key(
     }
     let a_slice = unsafe { core::slice::from_raw_parts(pk_a, TFHE_TRLWE_N) };
     let b_slice = unsafe { core::slice::from_raw_parts(pk_b, TFHE_TRLWE_N) };
-    let a = Poly::<TFHE_TRLWE_N, Q>::from_coeffs_mod_q_slice(a_slice);
-    let b = Poly::<TFHE_TRLWE_N, Q>::from_coeffs_mod_q_slice(b_slice);
-    let pk = TFHEPublicKey::<TFHE_TRLWE_N, Q> {
-        ct: TRLWECiphertext { a, b },
-    };
+    let a = crate::tfhe::coeffs_mod_q_from_slice::<TFHE_TRLWE_N, Q>(a_slice);
+    let b = crate::tfhe::coeffs_mod_q_from_slice::<TFHE_TRLWE_N, Q>(b_slice);
+    let pk = TFHEPublicKey::<TFHE_TRLWE_N, Q> { a, b };
     let out_bytes = unsafe { core::slice::from_raw_parts_mut(out, out_len) };
     match postcard::to_slice(&pk, out_bytes) {
         Ok(rem) => {
@@ -394,19 +392,17 @@ mod tests {
         assert_eq!(rc, BATTERY_OK);
         let pk: TFHEPublicKey<TFHE_TRLWE_N, Q> = postcard::from_bytes(&buf[..written]).unwrap();
         for i in 0..TFHE_TRLWE_N {
-            assert_eq!(pk.ct.a.coeffs[i], 1u64 % Q);
-            assert_eq!(pk.ct.b.coeffs[i], 2u64 % Q);
+            assert_eq!(pk.a[i], 1u64 % Q);
+            assert_eq!(pk.b[i], 2u64 % Q);
         }
     }
 
     #[test]
     fn tfhe_encrypt_buf_too_small() {
         // Build a minimal pk
-        let a = Poly::<TFHE_TRLWE_N, Q>::from_coeffs_mod_q_slice(&[0u64; TFHE_TRLWE_N]);
-        let b = Poly::<TFHE_TRLWE_N, Q>::from_coeffs_mod_q_slice(&[0u64; TFHE_TRLWE_N]);
-        let pk = TFHEPublicKey::<TFHE_TRLWE_N, Q> {
-            ct: TRLWECiphertext { a, b },
-        };
+        let a = crate::tfhe::coeffs_mod_q_from_slice::<TFHE_TRLWE_N, Q>(&[0u64; TFHE_TRLWE_N]);
+        let b = crate::tfhe::coeffs_mod_q_from_slice::<TFHE_TRLWE_N, Q>(&[0u64; TFHE_TRLWE_N]);
+        let pk = TFHEPublicKey::<TFHE_TRLWE_N, Q> { a, b };
         let pk_bytes = postcard::to_allocvec(&pk).unwrap();
         let aes_key = [0u8; AES_KEY_LEN];
         let seed = [7u8; BATTERY_SEED_LEN];
