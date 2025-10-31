@@ -101,27 +101,30 @@ impl<
         for row_num in 0..rows {
             let row_offset = row_num * cols;
             let (pvs, current) = vec.split_at_mut(row_offset);
-            let first_input = if row_num == 0 {
-                nonce
-            } else {
-                &neighbors[row_num - 1].0
-            };
-            current[..HASH_SIZE].copy_from_slice(first_input);
+            let first_input = if row_num == 0 { nonce } else { &neighbors[row_num - 1].0 };
             let second_input = if row_num <= 1 {
                 leaf
             } else {
                 &pvs[pvs.len() - WIDTH..pvs.len() - WIDTH + HASH_SIZE]
             };
+            // Copy the two halves unconditionally. On row 0 this yields
+            // current = [nonce || leaf]. With the fixed right-neighbor mapping
+            // on row 0 (selector = 0), the permutation state is [leaf || nonce],
+            // i.e., we effectively commit to hash(leaf || nonce) without any
+            // special-case branching here.
+            current[..HASH_SIZE].copy_from_slice(first_input);
             current[HASH_SIZE..HASH_SIZE_2].copy_from_slice(second_input);
             let mut state = [F::ZERO; WIDTH];
-            current[HASH_SIZE_2] = if row_num > 0 && neighbors[row_num - 1].1 {
+            if row_num > 0 && neighbors[row_num - 1].1 {
+                // Neighbor on the left: [neighbor || current]
                 state[0..HASH_SIZE_2].copy_from_slice(&current[0..HASH_SIZE_2]);
-                F::ONE
+                current[HASH_SIZE_2] = F::ONE;
             } else {
+                // Neighbor on the right: [current || neighbor]
                 state[0..HASH_SIZE].copy_from_slice(&current[HASH_SIZE..HASH_SIZE_2]);
                 state[HASH_SIZE..HASH_SIZE_2].copy_from_slice(&current[0..HASH_SIZE]);
-                F::ZERO
-            };
+                current[HASH_SIZE_2] = F::ZERO;
+            }
             let hash_slice = &mut current[HASH_OFFSET..cols];
             // The memory is initialized, but generate_trace_rows_for_perm
             // is copied from p3_poseidon2_air and it expects MaybeUninit.

@@ -193,7 +193,7 @@ pub extern "C" fn tfhe_pk_encrypt_raw(
 #[derive(serde::Serialize, serde::Deserialize)]
 struct ZkpProofBundle(
     MerkleInclusionProof,
-    Vec<Val>, // public values layout: [root(8) | nonce_field(8) | hash(nonce||leaf)(8)]
+    Vec<Val>, // public values layout: [root(8) | nonce_field(8) | hash(leaf||nonce)(8)]
 );
 
 #[derive(serde::Serialize, serde::Deserialize)]
@@ -209,7 +209,7 @@ struct OpaqueMerklePathArgs {
 /// - `nonce32` (len=`BATTERY_NONCE_LEN`)
 /// Outputs:
 /// - `proof_out`/`proof_out_len`: caller-provided buffer for postcard-serialized bundle:
-///   (proof, public_values) where public_values = [root(8) | nonce_field(8) | hash(nonce||leaf)(8)].
+///   (proof, public_values) where public_values = [root(8) | nonce_field(8) | hash(leaf||nonce)(8)].
 /// - `out_proof_written`: number of bytes written. If too small, returns `BATTERY_ERR_BUFSZ`.
 ///
 /// Serialization: postcard 1.x (stable).
@@ -234,7 +234,7 @@ pub extern "C" fn zkp_generate_proof(
     if levels == 0 || args.sides_bitflags.len() != levels {
         return BATTERY_ERR_INPUT;
     }
-    // The ZKP trace includes an extra first row for hash(nonce||leaf),
+    // The ZKP trace includes an extra first row for hash(leaf||nonce),
     // so the prover requires (levels + 1) to be a power of two.
     let rows = levels + 1;
     if !rows.is_power_of_two() {
@@ -271,7 +271,7 @@ pub extern "C" fn zkp_generate_proof(
     }
     let (proof, public_values) = zkp::generate_proof(&leaf, &neighbors, &nonce_arr);
     // Public values layout is fixed at 24 = 3 * HASH_SIZE elements:
-    //   [root(8) | nonce_field(8) | hash(nonce||leaf)(8)].
+    //   [root(8) | nonce_field(8) | hash(leaf||nonce)(8)].
     if public_values.len() != 3 * zkp::HASH_SIZE {
         return BATTERY_ERR_INPUT;
     }
@@ -548,7 +548,7 @@ mod tests {
         assert!(written > 0);
 
         let bundle: ZkpProofBundle = postcard::from_bytes(&out[..written]).unwrap();
-        // Expect exactly 3 * HASH_SIZE public values: root(8) | nonce_field(8) | hash(nonce||leaf)(8)
+        // Expect exactly 3 * HASH_SIZE public values: root(8) | nonce_field(8) | hash(leaf||nonce)(8)
         assert_eq!(bundle.1.len(), 3 * zkp::HASH_SIZE);
         // Re-serialize and deserialize again to check roundtrip stability of the bundle
         let bytes2 = postcard::to_allocvec(&bundle).unwrap();
