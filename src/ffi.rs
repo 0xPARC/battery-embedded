@@ -147,12 +147,7 @@ pub extern "C" fn tfhe_pk_encrypt_raw(
     a_out: *mut u64,
     b_out: *mut u64,
 ) -> i32 {
-    if pk.is_null()
-        || bytes.is_null()
-        || seed32.is_null()
-        || a_out.is_null()
-        || b_out.is_null()
-    {
+    if pk.is_null() || bytes.is_null() || seed32.is_null() || a_out.is_null() || b_out.is_null() {
         return BATTERY_ERR_NULL;
     }
     if seed_len != BATTERY_SEED_LEN {

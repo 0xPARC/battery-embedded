@@ -101,7 +101,11 @@ impl<
         for row_num in 0..rows {
             let row_offset = row_num * cols;
             let (pvs, current) = vec.split_at_mut(row_offset);
-            let first_input = if row_num == 0 { nonce } else { &neighbors[row_num - 1].0 };
+            let first_input = if row_num == 0 {
+                nonce
+            } else {
+                &neighbors[row_num - 1].0
+            };
             let second_input = if row_num <= 1 {
                 leaf
             } else {
@@ -182,6 +186,7 @@ impl<
         builder.assert_zero(selector * one_minus_selector);
         // Force the first selector to be zero; otherwise it's easy to construct 2 valid proofs
         builder.when_first_row().assert_zero(selector);
+        builder.when_first_row().assert_zero(next[HASH_SIZE_2]);
         // Gate transitions except the first (row 0 -> 1).
         let not_first_row = AB::Expr::from(AB::F::ONE) - hash[0];
         let transition_not_first_row = builder.is_transition() * not_first_row.clone();
