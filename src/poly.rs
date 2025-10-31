@@ -127,7 +127,6 @@ impl<const N: usize, const Q: u64> Poly<N, Q> {
     // Negacyclic convolution modulo X^N + 1 in Z/QZ: c = a * b (mod X^N + 1, Q)
     #[inline]
     pub fn mul_negacyclic(&self, other: &Self) -> Self {
-        const { assert!(N > 0) };
         const { assert!(N.is_power_of_two()) }; // power of two
         let mut out = [0u64; N];
         let m = N - 1;
@@ -229,6 +228,4 @@ mod tests {
             assert_eq!(got.coeffs[i], exp.coeffs[i]);
         }
     }
-
-    
 }
