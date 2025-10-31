@@ -10,7 +10,7 @@ const fn qmask<const Q: u64>() -> u64 {
 
 #[inline(always)]
 fn add_mod<const Q: u64>(x: u64, y: u64) -> u64 {
-    debug_assert!(Q > 0);
+    const { assert!(Q > 0) };
     if Q.is_power_of_two() {
         x.wrapping_add(y) & qmask::<Q>()
     } else {
@@ -20,7 +20,7 @@ fn add_mod<const Q: u64>(x: u64, y: u64) -> u64 {
 
 #[inline(always)]
 pub(crate) fn sub_mod<const Q: u64>(x: u64, y: u64) -> u64 {
-    debug_assert!(Q > 0);
+    const { assert!(Q > 0) };
     if Q.is_power_of_two() {
         x.wrapping_sub(y) & qmask::<Q>()
     } else {
@@ -31,7 +31,7 @@ pub(crate) fn sub_mod<const Q: u64>(x: u64, y: u64) -> u64 {
 
 #[inline(always)]
 fn mul_mod<const Q: u64>(x: u64, y: u64) -> u64 {
-    debug_assert!(Q > 0);
+    const { assert!(Q > 0) };
     if Q.is_power_of_two() {
         x.wrapping_mul(y) & qmask::<Q>()
     } else {
@@ -41,6 +41,7 @@ fn mul_mod<const Q: u64>(x: u64, y: u64) -> u64 {
 
 #[inline(always)]
 fn reduce<const Q: u64>(x: u64) -> u64 {
+    const { assert!(Q > 0) };
     if Q.is_power_of_two() {
         x & qmask::<Q>()
     } else {
@@ -148,6 +149,7 @@ impl<const N: usize, const Q: u64> Poly<N, Q> {
     // Sampling
     #[inline]
     pub fn uniform<R: Rng>(rng: &mut R) -> Self {
+        const { assert!(Q > 0) };
         let mut out = [0u64; N];
         for i in 0..N {
             out[i] = rng.random_range(0..Q);
@@ -157,6 +159,7 @@ impl<const N: usize, const Q: u64> Poly<N, Q> {
 
     #[inline]
     pub fn error<R: Rng, const B: u64>(rng: &mut R) -> Self {
+        const { assert!(Q > 0) };
         let mut out = [0u64; N];
         let b128: i128 = B as i128;
         for i in 0..N {
