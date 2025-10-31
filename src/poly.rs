@@ -127,36 +127,20 @@ impl<const N: usize, const Q: u64> Poly<N, Q> {
     // Negacyclic convolution modulo X^N + 1 in Z/QZ: c = a * b (mod X^N + 1, Q)
     #[inline]
     pub fn mul_negacyclic(&self, other: &Self) -> Self {
+        const { assert!(N > 0) };
+        const { assert!(N.is_power_of_two()) }; // power of two
         let mut out = [0u64; N];
-        // Specialized path for power-of-two N: single loop with bitmask wrap
-        if (N & (N - 1)) == 0 {
-            let m = N - 1;
-            for i in 0..N {
-                let ai = self.coeffs[i];
-                for j in 0..N {
-                    let sum = i + j;
-                    let k = sum & m;
-                    if sum < N {
-                        out[k] = add_mod::<Q>(out[k], mul_mod::<Q>(ai, other.coeffs[j]));
-                    } else {
-                        out[k] = sub_mod::<Q>(out[k], mul_mod::<Q>(ai, other.coeffs[j]));
-                    }
-                }
-            }
-            return Poly { coeffs: out };
-        }
-        // General path
+        let m = N - 1;
         for i in 0..N {
             let ai = self.coeffs[i];
-            let lim = N - i; // indices where i + j < N → add
-            for j in 0..lim {
-                let k = i + j;
-                out[k] = add_mod::<Q>(out[k], mul_mod::<Q>(ai, other.coeffs[j]));
-            }
-            for j in lim..N {
-                // wrap-around subtract
-                let k = i + j - N;
-                out[k] = sub_mod::<Q>(out[k], mul_mod::<Q>(ai, other.coeffs[j]));
+            for j in 0..N {
+                let sum = i + j;
+                let k = sum & m;
+                if sum < N {
+                    out[k] = add_mod::<Q>(out[k], mul_mod::<Q>(ai, other.coeffs[j]));
+                } else {
+                    out[k] = sub_mod::<Q>(out[k], mul_mod::<Q>(ai, other.coeffs[j]));
+                }
             }
         }
         Poly { coeffs: out }
@@ -246,20 +230,5 @@ mod tests {
         }
     }
 
-    #[test]
-    fn mul_negacyclic_matches_naive_non_power_of_two() {
-        const N: usize = 6; // general path
-        const Q: u64 = 1009; // prime to exercise non-2^k path
-        let mut a = Poly::<N, Q>::zero();
-        let mut b = Poly::<N, Q>::zero();
-        for i in 0..N {
-            a.coeffs[i] = (i as u64 * 9 + 3) % Q;
-            b.coeffs[i] = (i as u64 * 4 + 5) % Q;
-        }
-        let got = a.mul_negacyclic(&b);
-        let exp = mul_negacyclic_naive(&a, &b);
-        for i in 0..N {
-            assert_eq!(got.coeffs[i], exp.coeffs[i]);
-        }
-    }
+    
 }
