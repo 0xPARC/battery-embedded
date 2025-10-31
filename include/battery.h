@@ -92,7 +92,7 @@ int32_t tfhe_pk_encrypt_raw(const uint8_t *pk,
  * - `nonce32` (len=`BATTERY_NONCE_LEN`)
  * Outputs:
  * - `proof_out`/`proof_out_len`: caller-provided buffer for postcard-serialized bundle:
- *   (proof, public_values) where public_values = [root(8) | nonce_field(8) | hash(nonce||leaf)(8)].
+ *   (proof, public_values) where public_values = [root(8) | nonce_field(8) | hash(leaf||nonce)(8)].
  * - `out_proof_written`: number of bytes written. If too small, returns `BATTERY_ERR_BUFSZ`.
  *
  * Serialization: postcard 1.x (stable).
