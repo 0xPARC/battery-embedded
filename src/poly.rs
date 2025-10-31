@@ -64,7 +64,7 @@ impl<const N: usize, const Q: u64> Poly<N, Q> {
 
     /// Return a + b (mod Q), computed in a single pass.
     #[inline]
-    pub fn sum2(a: &Self, b: &Self) -> Self {
+    pub fn add(a: &Self, b: &Self) -> Self {
         let mut out = [0u64; N];
         for i in 0..N {
             out[i] = add_mod::<Q>(a.coeffs[i], b.coeffs[i]);
@@ -74,7 +74,7 @@ impl<const N: usize, const Q: u64> Poly<N, Q> {
 
     /// Return a + b + c (mod Q), computed in a single pass.
     #[inline]
-    pub fn sum3(a: &Self, b: &Self, c: &Self) -> Self {
+    pub fn add3(a: &Self, b: &Self, c: &Self) -> Self {
         let mut out = [0u64; N];
         for i in 0..N {
             let t = add_mod::<Q>(b.coeffs[i], c.coeffs[i]);

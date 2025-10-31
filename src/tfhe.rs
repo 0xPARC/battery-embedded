@@ -57,8 +57,8 @@ impl<const N: usize, const Q: u64> TRLWECiphertext<N, Q> {
         let e1 = Poly::<N, Q>::error::<R, B>(rng);
         let e2 = Poly::<N, Q>::error::<R, B>(rng);
         // Fuse post-ops to minimize full-array passes
-        let a = Poly::<N, Q>::sum2(&a_scaled, &e1);
-        let b = Poly::<N, Q>::sum3(&b_scaled, &e2, pt);
+        let a = Poly::<N, Q>::add(&a_scaled, &e1);
+        let b = Poly::<N, Q>::add3(&b_scaled, &e2, pt);
         TRLWECiphertext { a, b }
     }
 }
