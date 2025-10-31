@@ -12,6 +12,8 @@ pub mod tfhe;
 #[cfg(any(feature = "std", feature = "alloc"))]
 pub mod zkp;
 
+pub mod poly;
+
 #[cfg(feature = "ffi")]
 pub mod ffi;
 

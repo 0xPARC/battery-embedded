@@ -73,6 +73,19 @@ int32_t tfhe_pk_encrypt(const uint8_t *pk,
                         size_t *out_written);
 
 /**
+ * Encrypt bytes and return raw TRLWE ciphertext coefficients (no serialization).
+ * a_out and b_out must each point to arrays of length TFHE_TRLWE_N.
+ */
+int32_t tfhe_pk_encrypt_raw(const uint8_t *pk,
+                            size_t pk_len,
+                            const uint8_t *bytes,
+                            size_t bytes_len,
+                            const uint8_t *seed32,
+                            size_t seed_len,
+                            uint64_t *a_out,
+                            uint64_t *b_out);
+
+/**
  * Generate a Merkle-path ZK proof using a single opaque serialized argument, with a separate nonce.
  * Inputs:
  * - `args`/`args_len`: postcard-serialized OpaqueMerklePathArgs

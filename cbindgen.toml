@@ -26,6 +26,7 @@ include = [
   "AES_IV_LEN",
   "tfhe_pk_encrypt_aes_key",
   "tfhe_pk_encrypt",
+  "tfhe_pk_encrypt_raw",
   "tfhe_pack_public_key",
   "aes_ctr_encrypt",
   "zkp_generate_proof",
