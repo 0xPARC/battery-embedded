@@ -107,13 +107,16 @@ pub fn generate_proof(
     let nonce_field = nonce_field_rep(nonce);
     // Sanity: neighbors.len() + 1 must be power-of-two for the radix-2 FFTs
     debug_assert!((neighbors.len() + 1).is_power_of_two());
-    let trace = air.generate_trace_rows(leaf, neighbors, &nonce_field, fri_params.log_blowup);
-    let mut public_values = trace.row_slice(trace.height() - 1).unwrap()
-        [trace.width() - WIDTH..trace.width() - WIDTH + 8]
-        .to_vec();
-    public_values.extend_from_slice(&nonce_field);
-    public_values
-        .extend_from_slice(&trace.values[trace.width - WIDTH..trace.width - WIDTH + HASH_SIZE]);
+    let trace = air.generate_trace_rows(leaf, neighbors, &nonce_field);
+    let mut public_values: Vec<Val> = Vec::with_capacity(3 * HASH_SIZE);
+    {
+        let last_row = trace.row_slice(trace.height() - 1).unwrap();
+        let start = trace.width() - WIDTH;
+        let end = start + HASH_SIZE;
+        public_values.extend_from_slice(&last_row[start..end]);
+        public_values.extend_from_slice(&nonce_field);
+        public_values.extend_from_slice(&trace.values[start..end]);
+    }
 
     let dft = Dft::default();
 
@@ -211,7 +214,6 @@ mod test {
         let challenger = Challenger::from_hasher(nonce.to_vec(), byte_hash);
         let air = TestAir::new(constants);
         let fri_params = create_benchmark_fri_params_zk(challenge_mmcs);
-        let log_blowup = fri_params.log_blowup;
         let dft = Dft::default();
         let pcs = Pcs::new(
             dft,
@@ -223,12 +225,16 @@ mod test {
         let config = MerkleInclusionConfig::new(pcs, challenger);
 
         let nonce_field = nonce_field_rep(nonce);
-        let trace = air.generate_trace_rows(leaf, neighbors, &nonce_field, log_blowup);
-        let mut pv = trace.row_slice(trace.height() - 1).unwrap()
-            [trace.width() - WIDTH..trace.width() - WIDTH + HASH_SIZE]
-            .to_vec();
-        pv.extend_from_slice(&nonce_field);
-        pv.extend_from_slice(&trace.values[trace.width - WIDTH..trace.width - WIDTH + HASH_SIZE]);
+        let trace = air.generate_trace_rows(leaf, neighbors, &nonce_field);
+        let mut pv: Vec<Val> = Vec::with_capacity(3 * HASH_SIZE);
+        {
+            let last_row = trace.row_slice(trace.height() - 1).unwrap();
+            let start = trace.width() - WIDTH;
+            let end = start + HASH_SIZE;
+            pv.extend_from_slice(&last_row[start..end]);
+            pv.extend_from_slice(&nonce_field);
+            pv.extend_from_slice(&trace.values[start..end]);
+        }
         (config, air, trace, pv)
     }
 
