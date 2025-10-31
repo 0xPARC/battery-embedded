@@ -26,6 +26,7 @@ static uint32_t lcg32(uint32_t *s) {
 int main(int argc, char **argv) {
     // Parse arguments
     int iters = 100; // default
+    int warmup = 0;  // default: no warmup to match process timing
     for (int i = 1; i < argc; i++) {
         if (strcmp(argv[i], "--iters") == 0) {
             if (i + 1 >= argc) {
@@ -49,6 +50,28 @@ int main(int argc, char **argv) {
                 return 2;
             }
             iters = (int)v;
+        } else if (strcmp(argv[i], "--warmup") == 0) {
+            if (i + 1 >= argc) {
+                fprintf(stderr, "error: --warmup requires a value\n");
+                print_usage(argv[0]);
+                return 2;
+            }
+            char *end = NULL;
+            long v = strtol(argv[++i], &end, 10);
+            if (end == argv[i] || *end != '\0' || v < 0 || v > INT32_MAX) {
+                fprintf(stderr, "error: invalid --warmup value: %s\n", argv[i]);
+                return 2;
+            }
+            warmup = (int)v;
+        } else if (strncmp(argv[i], "--warmup=", 9) == 0) {
+            const char *val = argv[i] + 9;
+            char *end = NULL;
+            long v = strtol(val, &end, 10);
+            if (end == val || *end != '\0' || v < 0 || v > INT32_MAX) {
+                fprintf(stderr, "error: invalid --warmup value: %s\n", val);
+                return 2;
+            }
+            warmup = (int)v;
         } else if (strcmp(argv[i], "-h") == 0 || strcmp(argv[i], "--help") == 0) {
             print_usage(argv[0]);
             return 0;
@@ -68,27 +91,32 @@ int main(int argc, char **argv) {
     int rc = tfhe_pack_public_key(pk_a, pk_b, pk_buf, sizeof pk_buf, &pk_len);
     if (rc != BATTERY_OK) { fprintf(stderr, "pk pack failed: %s\n", battery_strerror(rc)); return 1; }
 
-    unsigned char ct_buf[1<<19]; size_t ct_written = 0;
+    uint64_t ct_a[TFHE_TRLWE_N];
+    uint64_t ct_b[TFHE_TRLWE_N];
     uint8_t seed[BATTERY_SEED_LEN];
     uint8_t msg[1];
     uint32_t s = 123456789u;
 
-    // Warmup
-    memset(seed, 7, sizeof seed);
-    msg[0] = (uint8_t)lcg32(&s);
-    rc = tfhe_pk_encrypt(pk_buf, pk_len, msg, 1, seed, BATTERY_SEED_LEN, ct_buf, sizeof ct_buf, &ct_written);
-    if (rc != BATTERY_OK) { fprintf(stderr, "encrypt failed (warmup): %s\n", battery_strerror(rc)); return 1; }
+    // Warmup (optional)
+    if (warmup > 0) {
+        memset(seed, 7, sizeof seed);
+        msg[0] = (uint8_t)lcg32(&s);
+        for (int i = 0; i < warmup; i++) {
+            rc = tfhe_pk_encrypt_raw(pk_buf, pk_len, msg, 1, seed, BATTERY_SEED_LEN, ct_a, ct_b);
+            if (rc != BATTERY_OK) { fprintf(stderr, "encrypt failed (warmup): %s\n", battery_strerror(rc)); return 1; }
+        }
+    }
 
     uint64_t t0 = now_ns();
     for (int i = 0; i < iters; i++) {
         msg[0] = (uint8_t)lcg32(&s);
         // per-iter seed for reproducibility
         memset(seed, (uint8_t)(i & 0xFF), sizeof seed);
-        rc = tfhe_pk_encrypt(pk_buf, pk_len, msg, 1, seed, BATTERY_SEED_LEN, ct_buf, sizeof ct_buf, &ct_written);
+        rc = tfhe_pk_encrypt_raw(pk_buf, pk_len, msg, 1, seed, BATTERY_SEED_LEN, ct_a, ct_b);
         if (rc != BATTERY_OK) { fprintf(stderr, "encrypt failed: %s\n", battery_strerror(rc)); return 1; }
     }
     uint64_t t1 = now_ns();
     double avg_us = (double)(t1 - t0) / (double)iters / 1000.0;
-    printf("[bench] avg tfhe_pk_encrypt(1 byte): %.2f us over %d iters (ct_len=%zu)\n", avg_us, iters, ct_written);
+    printf("[bench] avg tfhe_pk_encrypt_raw(1 byte): %.2f us over %d iters\n", avg_us, iters);
     return 0;
 }
