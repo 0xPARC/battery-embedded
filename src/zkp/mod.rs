@@ -107,13 +107,16 @@ pub fn generate_proof(
     let nonce_field = nonce_field_rep(nonce);
     // Sanity: neighbors.len() + 1 must be power-of-two for the radix-2 FFTs
     debug_assert!((neighbors.len() + 1).is_power_of_two());
-    let trace = air.generate_trace_rows(leaf, neighbors, &nonce_field, fri_params.log_blowup);
-    let mut public_values = trace.row_slice(trace.height() - 1).unwrap()
-        [trace.width() - WIDTH..trace.width() - WIDTH + 8]
-        .to_vec();
-    public_values.extend_from_slice(&nonce_field);
-    public_values
-        .extend_from_slice(&trace.values[trace.width - WIDTH..trace.width - WIDTH + HASH_SIZE]);
+    let trace = air.generate_trace_rows(leaf, neighbors, &nonce_field);
+    let mut public_values: Vec<Val> = Vec::with_capacity(3 * HASH_SIZE);
+    {
+        let last_row = trace.row_slice(trace.height() - 1).unwrap();
+        let start = trace.width() - WIDTH;
+        let end = start + HASH_SIZE;
+        public_values.extend_from_slice(&last_row[start..end]);
+        public_values.extend_from_slice(&nonce_field);
+        public_values.extend_from_slice(&trace.values[start..end]);
+    }
 
     let dft = Dft::default();
 
@@ -211,24 +214,27 @@ mod test {
         let challenger = Challenger::from_hasher(nonce.to_vec(), byte_hash);
         let air = TestAir::new(constants);
         let fri_params = create_benchmark_fri_params_zk(challenge_mmcs);
-        let log_blowup = fri_params.log_blowup;
         let dft = Dft::default();
         let pcs = Pcs::new(
             dft,
             val_mmcs,
             fri_params,
             4,
-            rand_chacha::ChaCha20Rng::from_seed(*nonce),
+            rand_chacha::ChaCha20Rng::from_seed(nonce.clone()),
         );
         let config = MerkleInclusionConfig::new(pcs, challenger);
 
         let nonce_field = nonce_field_rep(nonce);
-        let trace = air.generate_trace_rows(leaf, neighbors, &nonce_field, log_blowup);
-        let mut pv = trace.row_slice(trace.height() - 1).unwrap()
-            [trace.width() - WIDTH..trace.width() - WIDTH + HASH_SIZE]
-            .to_vec();
-        pv.extend_from_slice(&nonce_field);
-        pv.extend_from_slice(&trace.values[trace.width - WIDTH..trace.width - WIDTH + HASH_SIZE]);
+        let trace = air.generate_trace_rows(leaf, neighbors, &nonce_field);
+        let mut pv: Vec<Val> = Vec::with_capacity(3 * HASH_SIZE);
+        {
+            let last_row = trace.row_slice(trace.height() - 1).unwrap();
+            let start = trace.width() - WIDTH;
+            let end = start + HASH_SIZE;
+            pv.extend_from_slice(&last_row[start..end]);
+            pv.extend_from_slice(&nonce_field);
+            pv.extend_from_slice(&trace.values[start..end]);
+        }
         (config, air, trace, pv)
     }
 
@@ -253,7 +259,7 @@ mod test {
         // Keeping leaf and nonce constant while changing neighbors should:
         // - Change the Merkle root (PV[0..8])
         // - Keep the nonce field rep the same (PV[8..16])
-        // - Keep hash(nonce||leaf) the same (PV[16..24])
+        // - Keep hash(leaf||nonce) the same (PV[16..24])
         let leaf = [Val::from_canonical_checked(4).unwrap(); 8];
         let neighbors1 = [([Val::from_canonical_checked(3).unwrap(); 8], false); 31];
         let mut neighbors2 = [([Val::from_canonical_checked(5).unwrap(); 8], true); 31];
@@ -265,10 +271,29 @@ mod test {
 
         // Nonce field rep identical
         assert_eq!(&public1[8..16], &public2[8..16]);
-        // hash(nonce||leaf) identical
+        // hash(leaf||nonce) identical
         assert_eq!(&public1[16..24], &public2[16..24]);
         // Merkle root should differ when neighbors differ
         assert_ne!(&public1[0..8], &public2[0..8]);
+    }
+
+    #[test]
+    fn test_hash_nonce_leaf_depends_on_nonce_and_leaf() {
+        let neighbors = [([Val::from_canonical_checked(3).unwrap(); 8], false); 31];
+
+        // Change in nonce should change PV[16..24]
+        let leaf = [Val::from_canonical_checked(4).unwrap(); 8];
+        let nonce_a = [1u8; 32];
+        let nonce_b = [2u8; 32];
+        let (_, pv_a) = generate_proof(&leaf, &neighbors, &nonce_a);
+        let (_, pv_b) = generate_proof(&leaf, &neighbors, &nonce_b);
+        assert_ne!(&pv_a[16..24], &pv_b[16..24]);
+
+        // Change in leaf should change PV[16..24] (same nonce)
+        let mut leaf2 = leaf;
+        leaf2[0] = Val::from_canonical_checked(5).unwrap();
+        let (_, pv_c) = generate_proof(&leaf2, &neighbors, &nonce_a);
+        assert_ne!(&pv_a[16..24], &pv_c[16..24]);
     }
 
     #[test]
@@ -299,7 +324,7 @@ mod test {
         let (proof, public_values) = generate_proof(&leaf, &neighbors, &nonce);
 
         // Tamper with the public values after proving: flip one value in the
-        // nonce field region or the hash(nonce||leaf) region. Either should fail.
+        // nonce field region or the hash(leaf||nonce) region. Either should fail.
         let one = Val::from_canonical_checked(1).unwrap();
 
         // Case 1: change nonce field rep (PV[8..16])
@@ -307,7 +332,7 @@ mod test {
         pv_bad[8] = pv_bad[8] + one;
         assert!(verify_proof(&nonce, &proof, &pv_bad).is_err());
 
-        // Case 2: change hash(nonce||leaf) (PV[16..24])
+        // Case 2: change hash(leaf||nonce) (PV[16..24])
         let mut pv_bad2 = public_values.clone();
         pv_bad2[16] = pv_bad2[16] + one;
         assert!(verify_proof(&nonce, &proof, &pv_bad2).is_err());
@@ -365,5 +390,58 @@ mod test {
         let nonce = [9u8; 32];
         let (proof, public_values) = generate_proof(&leaf, &neighbors, &nonce);
         verify_proof(&nonce, &proof, &public_values).expect("verify ok");
+    }
+
+    // Not run by default. Run with: cargo test --release -- --ignored --nocapture
+    #[test]
+    #[ignore]
+    fn bench_prove_timing_once() {
+        use std::time::Instant;
+        let leaf = [Val::from_canonical_checked(4).unwrap(); 8];
+        let neighbors = [([Val::from_canonical_checked(3).unwrap(); 8], false); 31];
+        let nonce = [7u8; 32];
+
+        // Measure trace generation separately from proving.
+        let byte_hash = ByteHash {};
+        let u64_hash = U64Hash::new(KeccakF {});
+        let field_hash = FieldHash::new(u64_hash);
+        let compress = MyCompress::new(u64_hash);
+        let mut rng = rand_chacha::ChaCha20Rng::seed_from_u64(1);
+        let constants = RoundConstants::from_rng(&mut rng);
+        let val_mmcs = ValMmcs::new(field_hash, compress, rng);
+        let challenge_mmcs = ChallengeMmcs::new(val_mmcs.clone());
+        let challenger = Challenger::from_hasher(nonce.to_vec(), byte_hash);
+        let air = TestAir::new(constants);
+        let fri_params = create_benchmark_fri_params_zk(challenge_mmcs);
+        let dft = Dft::default();
+        let pcs = Pcs::new(
+            dft,
+            val_mmcs,
+            fri_params,
+            4,
+            rand_chacha::ChaCha20Rng::from_seed(nonce),
+        );
+        let config = MerkleInclusionConfig::new(pcs, challenger);
+
+        let nonce_field = nonce_field_rep(&nonce);
+        let t0 = Instant::now();
+        let trace = air.generate_trace_rows(&leaf, &neighbors, &nonce_field);
+        let gen_ms = t0.elapsed().as_secs_f64() * 1e3;
+        eprintln!("trace: rows={}, cols={}", trace.height(), trace.width());
+
+        let mut pv: Vec<Val> = Vec::with_capacity(3 * HASH_SIZE);
+        {
+            let last_row = trace.row_slice(trace.height() - 1).unwrap();
+            let start = trace.width() - WIDTH;
+            let end = start + HASH_SIZE;
+            pv.extend_from_slice(&last_row[start..end]);
+            pv.extend_from_slice(&nonce_field);
+            pv.extend_from_slice(&trace.values[start..end]);
+        }
+
+        let t1 = Instant::now();
+        let _proof = prove(&config, &air, trace, &pv);
+        let prove_ms = t1.elapsed().as_secs_f64() * 1e3;
+        eprintln!("timing-ms: trace_gen={:.3} prove={:.3}", gen_ms, prove_ms);
     }
 }

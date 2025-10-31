@@ -86,7 +86,6 @@ impl<
         leaf: &[F; HASH_SIZE],
         neighbors: &[([F; HASH_SIZE], bool)],
         nonce: &[F; HASH_SIZE],
-        extra_capacity_bits: usize,
     ) -> RowMajorMatrix<F> {
         let rows = neighbors.len() + 1;
         assert!(
@@ -95,7 +94,9 @@ impl<
         );
         let cols = self.width();
         let trace_size = rows * cols;
-        let mut vec = Vec::with_capacity(trace_size << extra_capacity_bits);
+        // Reserve exactly the space we need for the trace. The blowup factor
+        // applies later during FRI, not to the concrete trace rows.
+        let mut vec = Vec::with_capacity(trace_size);
         vec.resize(trace_size, F::ZERO);
         for row_num in 0..rows {
             let row_offset = row_num * cols;
@@ -105,22 +106,29 @@ impl<
             } else {
                 &neighbors[row_num - 1].0
             };
-            current[..HASH_SIZE].copy_from_slice(first_input);
             let second_input = if row_num <= 1 {
                 leaf
             } else {
                 &pvs[pvs.len() - WIDTH..pvs.len() - WIDTH + HASH_SIZE]
             };
+            // Copy the two halves unconditionally. On row 0 this yields
+            // current = [nonce || leaf]. With the fixed right-neighbor mapping
+            // on row 0 (selector = 0), the permutation state is [leaf || nonce],
+            // i.e., we effectively commit to hash(leaf || nonce) without any
+            // special-case branching here.
+            current[..HASH_SIZE].copy_from_slice(first_input);
             current[HASH_SIZE..HASH_SIZE_2].copy_from_slice(second_input);
             let mut state = [F::ZERO; WIDTH];
-            current[HASH_SIZE_2] = if row_num > 0 && neighbors[row_num - 1].1 {
+            if row_num > 0 && neighbors[row_num - 1].1 {
+                // Neighbor on the left: [neighbor || current]
                 state[0..HASH_SIZE_2].copy_from_slice(&current[0..HASH_SIZE_2]);
-                F::ONE
+                current[HASH_SIZE_2] = F::ONE;
             } else {
+                // Neighbor on the right: [current || neighbor]
                 state[0..HASH_SIZE].copy_from_slice(&current[HASH_SIZE..HASH_SIZE_2]);
                 state[HASH_SIZE..HASH_SIZE_2].copy_from_slice(&current[0..HASH_SIZE]);
-                F::ZERO
-            };
+                current[HASH_SIZE_2] = F::ZERO;
+            }
             let hash_slice = &mut current[HASH_OFFSET..cols];
             // The memory is initialized, but generate_trace_rows_for_perm
             // is copied from p3_poseidon2_air and it expects MaybeUninit.
@@ -138,10 +146,10 @@ impl<
                 HALF_FULL_ROUNDS,
                 PARTIAL_ROUNDS,
             >(hash_slice_maybe_uninit.borrow_mut(), state, &self.constants);
-            // For some reason, Poseidon2Cols has an `export` field that is always
-            // set to 1 by the generator and ignored by the eval.  We instead use
-            // this field for the row number.
-            hash_slice[0] = F::from_int(row_num);
+            // Mark the first row with 1, all other rows with 0. This boolean
+            // flag is used for gating constraints that should be skipped on the
+            // first transition, without introducing non-boolean scalars.
+            hash_slice[0] = if row_num == 0 { F::ONE } else { F::ZERO };
         }
         RowMajorMatrix::new(vec, cols)
     }
@@ -169,21 +177,19 @@ impl<
         let local = main.row_slice(0).unwrap();
         let next = main.row_slice(1).unwrap();
         let (inputs, hash) = local.split_at(HASH_OFFSET);
-        // We need a selector for "transition but not first row".
-        // For some reason, builder.first_row() is not 1 in the first row,
-        // so using 1 - builder.first_row() won't work.
-        // Instead, we store the row number in local[HASH_OFFSET] = hash[0].
-        builder.when_first_row().assert_zero(hash[0]);
-        builder
-            .when_transition()
-            .assert_one(next[HASH_OFFSET] - hash[0]);
+        // Use a boolean "is_first_row" flag stored in hash[0].
+        builder.when_first_row().assert_one(hash[0]);
+        // Ensure only the first row has the flag set.
+        builder.when_transition().assert_zero(next[HASH_OFFSET]);
         let selector = inputs[HASH_SIZE_2];
         let one_minus_selector = AB::Expr::from(AB::F::ONE) - selector;
         builder.assert_zero(selector * one_minus_selector);
         // Force the first selector to be zero; otherwise it's easy to construct 2 valid proofs
         builder.when_first_row().assert_zero(selector);
         builder.when_first_row().assert_zero(next[HASH_SIZE_2]);
-        let transition_not_first_row = builder.is_transition() * hash[0];
+        // Gate transitions except the first (row 0 -> 1).
+        let not_first_row = AB::Expr::from(AB::F::ONE) - hash[0];
+        let transition_not_first_row = builder.is_transition() * not_first_row.clone();
         for i in 0..HASH_SIZE {
             // The offset of 1 is due to the `export` field in `Poseidon2Cols`.
             // We are using it to store the row number.
