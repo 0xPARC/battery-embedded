@@ -23,6 +23,11 @@ strip = true
 incremental = false
 panic = "abort"
 
+[profile.dev]
+# Make `cargo check --no-default-features --features ffi,alloc` work in no_std
+# by avoiding unwinding. Tests still use the default panic strategy.
+panic = "abort"
+
 [dependencies]
 rand_chacha = { version = "0.9", default-features = false }
 rand = { version = "0.9", default-features = false }

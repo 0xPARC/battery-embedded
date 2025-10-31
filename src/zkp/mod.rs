@@ -1,7 +1,7 @@
 //use p3_baby_bear::{BabyBear, GenericPoseidon2LinearLayersBabyBear};
 use p3_challenger::{HashChallenger, SerializingChallenger32};
 use p3_commit::ExtensionMmcs;
-use p3_field::{extension::BinomialExtensionField, integers::QuotientMap};
+use p3_field::{PrimeCharacteristicRing, extension::BinomialExtensionField, integers::QuotientMap};
 use p3_fri::{HidingFriPcs, create_benchmark_fri_params_zk};
 use p3_keccak::{Keccak256Hash, KeccakF};
 use p3_koala_bear::{GenericPoseidon2LinearLayersKoalaBear, KoalaBear};
@@ -72,8 +72,63 @@ pub fn nonce_field_rep(nonce: &[u8; 32]) -> [Val; 8] {
     })
 }
 
+/// Compute the Poseidon2-based leaf commitment from a secret (8 field elements).
+/// This mirrors the leaf hashing row used inside the AIR: Poseidon2(state = [zeros(8) || secret(8)]).
+pub fn leaf_from_secret(secret: &[Val; 8]) -> [Val; 8] {
+    use p3_poseidon2::GenericPoseidon2LinearLayers;
+    type Layers = PoseidonLayers;
+    let mut rng = ChaCha20Rng::seed_from_u64(1);
+    let constants: RoundConstants<Val, WIDTH, HALF_FULL_ROUNDS, PARTIAL_ROUNDS> =
+        RoundConstants::from_rng(&mut rng);
+    // Build initial state as in the circuit: [zeros || secret]
+    let mut state = [Val::from_canonical_checked(0).unwrap(); WIDTH];
+    state[WIDTH - 8..WIDTH].copy_from_slice(secret);
+    Layers::external_linear_layer(&mut state);
+    // Beginning full rounds
+    for r in 0..HALF_FULL_ROUNDS {
+        for i in 0..WIDTH {
+            state[i] += constants.beginning_full_round_constants[r][i];
+            // S-box degree is SBOX_DEGREE with SBOX_REGISTERS=0 in our config
+            state[i] = match SBOX_DEGREE {
+                3 => state[i].cube(),
+                5 => state[i].exp_const_u64::<5>(),
+                7 => state[i].exp_const_u64::<7>(),
+                _ => panic!("Unsupported SBOX_DEGREE {}", SBOX_DEGREE),
+            };
+        }
+        Layers::external_linear_layer(&mut state);
+    }
+    // Partial rounds
+    for r in 0..PARTIAL_ROUNDS {
+        state[0] += constants.partial_round_constants[r];
+        state[0] = match SBOX_DEGREE {
+            3 => state[0].cube(),
+            5 => state[0].exp_const_u64::<5>(),
+            7 => state[0].exp_const_u64::<7>(),
+            _ => unreachable!(),
+        };
+        Layers::internal_linear_layer(&mut state);
+    }
+    // Ending full rounds
+    for r in 0..HALF_FULL_ROUNDS {
+        for i in 0..WIDTH {
+            state[i] += constants.ending_full_round_constants[r][i];
+            state[i] = match SBOX_DEGREE {
+                3 => state[i].cube(),
+                5 => state[i].exp_const_u64::<5>(),
+                7 => state[i].exp_const_u64::<7>(),
+                _ => unreachable!(),
+            };
+        }
+        Layers::external_linear_layer(&mut state);
+    }
+    let mut out = [Val::from_canonical_checked(0).unwrap(); 8];
+    out.copy_from_slice(&state[WIDTH - 8..WIDTH]);
+    out
+}
+
 pub fn generate_proof(
-    leaf: &[Val; 8],
+    secret: &[Val; 8],
     neighbors: &[([Val; 8], bool)],
     nonce: &[u8; 32],
 ) -> (MerkleInclusionProof, Vec<Val>) {
@@ -105,17 +160,19 @@ pub fn generate_proof(
     let fri_params = create_benchmark_fri_params_zk(challenge_mmcs);
 
     let nonce_field = nonce_field_rep(nonce);
-    // Sanity: neighbors.len() + 1 must be power-of-two for the radix-2 FFTs
-    debug_assert!((neighbors.len() + 1).is_power_of_two());
-    let trace = air.generate_trace_rows(leaf, neighbors, &nonce_field);
-    let mut public_values: Vec<Val> = Vec::with_capacity(3 * HASH_SIZE);
+    // Sanity: neighbors.len() + 2 must be power-of-two for the radix-2 FFTs
+    debug_assert!((neighbors.len() + 2).is_power_of_two());
+    let trace = air.generate_trace_rows(secret, neighbors, &nonce_field);
+    // PV layout: [root(8) | nonce_field(8) | hash(leaf||nonce)(8)]
+    let mut public_values = trace.row_slice(trace.height() - 1).unwrap()
+        [trace.width() - WIDTH..trace.width() - WIDTH + HASH_SIZE]
+        .to_vec();
+    public_values.extend_from_slice(&nonce_field);
+    // PV[16..24] = binding hash from row 1 output (last 8 words)
     {
-        let last_row = trace.row_slice(trace.height() - 1).unwrap();
-        let start = trace.width() - WIDTH;
-        let end = start + HASH_SIZE;
-        public_values.extend_from_slice(&last_row[start..end]);
-        public_values.extend_from_slice(&nonce_field);
-        public_values.extend_from_slice(&trace.values[start..end]);
+        let row1 = trace.row_slice(1).unwrap();
+        let binding: Vec<Val> = row1[row1.len() - WIDTH..row1.len() - WIDTH + HASH_SIZE].to_vec();
+        public_values.extend_from_slice(&binding);
     }
 
     let dft = Dft::default();
@@ -194,7 +251,7 @@ mod test {
     >;
 
     fn build_fixture(
-        leaf: &[Val; 8],
+        secret: &[Val; 8],
         neighbors: &[([Val; 8], bool)],
         nonce: &[u8; 32],
     ) -> (
@@ -225,27 +282,28 @@ mod test {
         let config = MerkleInclusionConfig::new(pcs, challenger);
 
         let nonce_field = nonce_field_rep(nonce);
-        let trace = air.generate_trace_rows(leaf, neighbors, &nonce_field);
-        let mut pv: Vec<Val> = Vec::with_capacity(3 * HASH_SIZE);
-        {
-            let last_row = trace.row_slice(trace.height() - 1).unwrap();
-            let start = trace.width() - WIDTH;
-            let end = start + HASH_SIZE;
-            pv.extend_from_slice(&last_row[start..end]);
-            pv.extend_from_slice(&nonce_field);
-            pv.extend_from_slice(&trace.values[start..end]);
-        }
+        let trace = air.generate_trace_rows(secret, neighbors, &nonce_field);
+        let mut pv = trace.row_slice(trace.height() - 1).unwrap()
+            [trace.width() - WIDTH..trace.width() - WIDTH + HASH_SIZE]
+            .to_vec();
+        pv.extend_from_slice(&nonce_field);
+        // Copy binding hash (row 1) before moving the trace
+        let row1_binding: Vec<Val> = {
+            let row1 = trace.row_slice(1).unwrap();
+            row1[row1.len() - WIDTH..row1.len() - WIDTH + HASH_SIZE].to_vec()
+        };
+        pv.extend_from_slice(&row1_binding);
         (config, air, trace, pv)
     }
 
     #[test]
     fn test_root_independent_of_nonce() {
-        let leaf = [Val::from_canonical_checked(4).unwrap(); 8];
-        let neighbors = [([Val::from_canonical_checked(3).unwrap(); 8], false); 31];
+        let secret = [Val::from_canonical_checked(4).unwrap(); 8];
+        let neighbors = [([Val::from_canonical_checked(3).unwrap(); 8], false); 30];
         let nonce1 = [0; 32];
         let nonce2 = [1; 32];
-        let (_, public1) = generate_proof(&leaf, &neighbors, &nonce1);
-        let (_, public2) = generate_proof(&leaf, &neighbors, &nonce2);
+        let (_, public1) = generate_proof(&secret, &neighbors, &nonce1);
+        let (_, public2) = generate_proof(&secret, &neighbors, &nonce2);
         let nonce_field1 = nonce_field_rep(&nonce1);
         let nonce_field2 = nonce_field_rep(&nonce2);
         assert_eq!(public1[0..8], public2[0..8]);
@@ -256,18 +314,18 @@ mod test {
 
     #[test]
     fn test_hash_nonce_leaf_independent_of_neighbors() {
-        // Keeping leaf and nonce constant while changing neighbors should:
+        // Keeping secret and nonce constant while changing neighbors should:
         // - Change the Merkle root (PV[0..8])
         // - Keep the nonce field rep the same (PV[8..16])
-        // - Keep hash(leaf||nonce) the same (PV[16..24])
-        let leaf = [Val::from_canonical_checked(4).unwrap(); 8];
-        let neighbors1 = [([Val::from_canonical_checked(3).unwrap(); 8], false); 31];
-        let mut neighbors2 = [([Val::from_canonical_checked(5).unwrap(); 8], true); 31];
+        // - Keep hash(leaf(secret)||nonce) the same (PV[16..24])
+        let secret = [Val::from_canonical_checked(4).unwrap(); 8];
+        let neighbors1 = [([Val::from_canonical_checked(3).unwrap(); 8], false); 30];
+        let mut neighbors2 = [([Val::from_canonical_checked(5).unwrap(); 8], true); 30];
         neighbors2[0].1 = false; // small variation in side flags
         let nonce = [7u8; 32];
 
-        let (_, public1) = generate_proof(&leaf, &neighbors1, &nonce);
-        let (_, public2) = generate_proof(&leaf, &neighbors2, &nonce);
+        let (_, public1) = generate_proof(&secret, &neighbors1, &nonce);
+        let (_, public2) = generate_proof(&secret, &neighbors2, &nonce);
 
         // Nonce field rep identical
         assert_eq!(&public1[8..16], &public2[8..16]);
@@ -279,49 +337,49 @@ mod test {
 
     #[test]
     fn test_hash_nonce_leaf_depends_on_nonce_and_leaf() {
-        let neighbors = [([Val::from_canonical_checked(3).unwrap(); 8], false); 31];
+        let neighbors = [([Val::from_canonical_checked(3).unwrap(); 8], false); 30];
 
         // Change in nonce should change PV[16..24]
-        let leaf = [Val::from_canonical_checked(4).unwrap(); 8];
+        let secret = [Val::from_canonical_checked(4).unwrap(); 8];
         let nonce_a = [1u8; 32];
         let nonce_b = [2u8; 32];
-        let (_, pv_a) = generate_proof(&leaf, &neighbors, &nonce_a);
-        let (_, pv_b) = generate_proof(&leaf, &neighbors, &nonce_b);
+        let (_, pv_a) = generate_proof(&secret, &neighbors, &nonce_a);
+        let (_, pv_b) = generate_proof(&secret, &neighbors, &nonce_b);
         assert_ne!(&pv_a[16..24], &pv_b[16..24]);
 
-        // Change in leaf should change PV[16..24] (same nonce)
-        let mut leaf2 = leaf;
-        leaf2[0] = Val::from_canonical_checked(5).unwrap();
-        let (_, pv_c) = generate_proof(&leaf2, &neighbors, &nonce_a);
+        // Change in leaf(secret) should change PV[16..24] (same nonce)
+        let mut secret2 = secret;
+        secret2[0] = Val::from_canonical_checked(5).unwrap();
+        let (_, pv_c) = generate_proof(&secret2, &neighbors, &nonce_a);
         assert_ne!(&pv_a[16..24], &pv_c[16..24]);
     }
 
     #[test]
     fn test_verify_proof_1() {
-        let leaf = [Val::from_canonical_checked(4).unwrap(); 8];
-        let neighbors = [([Val::from_canonical_checked(3).unwrap(); 8], false); 31];
+        let secret = [Val::from_canonical_checked(4).unwrap(); 8];
+        let neighbors = [([Val::from_canonical_checked(3).unwrap(); 8], false); 30];
         let nonce = [0; 32];
-        let (proof, public_values) = generate_proof(&leaf, &neighbors, &nonce);
+        let (proof, public_values) = generate_proof(&secret, &neighbors, &nonce);
         verify_proof(&nonce, &proof, &public_values).unwrap();
     }
 
     #[test]
     fn test_verify_proof_2() {
-        let leaf = [Val::from_canonical_checked(4).unwrap(); 8];
-        let mut neighbors = [([Val::from_canonical_checked(3).unwrap(); 8], true); 31];
+        let secret = [Val::from_canonical_checked(4).unwrap(); 8];
+        let mut neighbors = [([Val::from_canonical_checked(3).unwrap(); 8], true); 30];
         neighbors[0].1 = false;
         let nonce = [0; 32];
-        let (proof, public_values) = generate_proof(&leaf, &neighbors, &nonce);
+        let (proof, public_values) = generate_proof(&secret, &neighbors, &nonce);
         verify_proof(&nonce, &proof, &public_values).unwrap();
     }
 
     #[test]
     fn verifier_should_reject_inconsistent_nonce_public_values() {
         // Build a valid proof first
-        let leaf = [Val::from_canonical_checked(4).unwrap(); 8];
-        let neighbors = [([Val::from_canonical_checked(3).unwrap(); 8], false); 31];
+        let secret = [Val::from_canonical_checked(4).unwrap(); 8];
+        let neighbors = [([Val::from_canonical_checked(3).unwrap(); 8], false); 30];
         let nonce = [7u8; 32];
-        let (proof, public_values) = generate_proof(&leaf, &neighbors, &nonce);
+        let (proof, public_values) = generate_proof(&secret, &neighbors, &nonce);
 
         // Tamper with the public values after proving: flip one value in the
         // nonce field region or the hash(leaf||nonce) region. Either should fail.
@@ -341,10 +399,10 @@ mod test {
     #[test]
     #[should_panic]
     fn prove_fails_when_forging_root() {
-        let leaf = [Val::from_canonical_checked(4).unwrap(); 8];
-        let neighbors = [([Val::from_canonical_checked(3).unwrap(); 8], false); 31];
+        let secret = [Val::from_canonical_checked(4).unwrap(); 8];
+        let neighbors = [([Val::from_canonical_checked(3).unwrap(); 8], false); 30];
         let nonce = [7u8; 32];
-        let (config, air, trace, mut pv) = build_fixture(&leaf, &neighbors, &nonce);
+        let (config, air, trace, mut pv) = build_fixture(&secret, &neighbors, &nonce);
         pv[0] = pv[0] + Val::from_canonical_checked(1).unwrap();
         let _ = prove(&config, &air, trace, &pv);
     }
@@ -352,10 +410,10 @@ mod test {
     #[test]
     #[should_panic]
     fn prove_fails_when_forging_nonce_field() {
-        let leaf = [Val::from_canonical_checked(4).unwrap(); 8];
-        let neighbors = [([Val::from_canonical_checked(3).unwrap(); 8], false); 31];
+        let secret = [Val::from_canonical_checked(4).unwrap(); 8];
+        let neighbors = [([Val::from_canonical_checked(3).unwrap(); 8], false); 30];
         let nonce = [7u8; 32];
-        let (config, air, trace, mut pv) = build_fixture(&leaf, &neighbors, &nonce);
+        let (config, air, trace, mut pv) = build_fixture(&secret, &neighbors, &nonce);
         pv[8] = pv[8] + Val::from_canonical_checked(1).unwrap();
         let _ = prove(&config, &air, trace, &pv);
     }
@@ -363,10 +421,10 @@ mod test {
     #[test]
     #[should_panic]
     fn prove_fails_when_forging_hash() {
-        let leaf = [Val::from_canonical_checked(4).unwrap(); 8];
-        let neighbors = [([Val::from_canonical_checked(3).unwrap(); 8], false); 31];
+        let secret = [Val::from_canonical_checked(4).unwrap(); 8];
+        let neighbors = [([Val::from_canonical_checked(3).unwrap(); 8], false); 30];
         let nonce = [7u8; 32];
-        let (config, air, trace, mut pv) = build_fixture(&leaf, &neighbors, &nonce);
+        let (config, air, trace, mut pv) = build_fixture(&secret, &neighbors, &nonce);
         pv[16] = pv[16] + Val::from_canonical_checked(1).unwrap();
         let _ = prove(&config, &air, trace, &pv);
     }
@@ -374,10 +432,10 @@ mod test {
     #[test]
     fn proof_postcard_roundtrip_verifies() {
         use postcard::{from_bytes, to_allocvec};
-        let leaf = [Val::from_canonical_checked(4).unwrap(); 8];
-        let neighbors = [([Val::from_canonical_checked(3).unwrap(); 8], false); 31];
+        let secret = [Val::from_canonical_checked(4).unwrap(); 8];
+        let neighbors = [([Val::from_canonical_checked(3).unwrap(); 8], false); 30];
         let nonce = [5u8; 32];
-        let (proof, public_values) = generate_proof(&leaf, &neighbors, &nonce);
+        let (proof, public_values) = generate_proof(&secret, &neighbors, &nonce);
         let bytes = to_allocvec(&proof).unwrap();
         let proof2: MerkleInclusionProof = from_bytes(&bytes).unwrap();
         verify_proof(&nonce, &proof2, &public_values).expect("verify after roundtrip");
@@ -385,63 +443,32 @@ mod test {
 
     #[test]
     fn proof_verifies() {
-        let leaf = [Val::from_canonical_checked(4).unwrap(); 8];
-        let neighbors = [([Val::from_canonical_checked(3).unwrap(); 8], false); 31];
+        let secret = [Val::from_canonical_checked(4).unwrap(); 8];
+        let neighbors = [([Val::from_canonical_checked(3).unwrap(); 8], false); 30];
         let nonce = [9u8; 32];
-        let (proof, public_values) = generate_proof(&leaf, &neighbors, &nonce);
+        let (proof, public_values) = generate_proof(&secret, &neighbors, &nonce);
         verify_proof(&nonce, &proof, &public_values).expect("verify ok");
     }
 
-    // Not run by default. Run with: cargo test --release -- --ignored --nocapture
     #[test]
-    #[ignore]
-    fn bench_prove_timing_once() {
-        use std::time::Instant;
-        let leaf = [Val::from_canonical_checked(4).unwrap(); 8];
-        let neighbors = [([Val::from_canonical_checked(3).unwrap(); 8], false); 31];
-        let nonce = [7u8; 32];
+    fn leaf_from_secret_matches_air_row0() {
+        // Build a non-trivial secret with increasing canonical limbs 1..=8
+        let secret: [Val; 8] = core::array::from_fn(|i| {
+            Val::from_canonical_checked((i as u32) + 1).unwrap()
+        });
+        // 30 levels -> rows = 32 (power of two), neighbors[0].1 must be false
+        let neighbors = [([Val::from_canonical_checked(3).unwrap(); 8], false); 30];
+        let nonce = [0xABu8; 32];
 
-        // Measure trace generation separately from proving.
-        let byte_hash = ByteHash {};
-        let u64_hash = U64Hash::new(KeccakF {});
-        let field_hash = FieldHash::new(u64_hash);
-        let compress = MyCompress::new(u64_hash);
-        let mut rng = rand_chacha::ChaCha20Rng::seed_from_u64(1);
-        let constants = RoundConstants::from_rng(&mut rng);
-        let val_mmcs = ValMmcs::new(field_hash, compress, rng);
-        let challenge_mmcs = ChallengeMmcs::new(val_mmcs.clone());
-        let challenger = Challenger::from_hasher(nonce.to_vec(), byte_hash);
-        let air = TestAir::new(constants);
-        let fri_params = create_benchmark_fri_params_zk(challenge_mmcs);
-        let dft = Dft::default();
-        let pcs = Pcs::new(
-            dft,
-            val_mmcs,
-            fri_params,
-            4,
-            rand_chacha::ChaCha20Rng::from_seed(nonce),
-        );
-        let config = MerkleInclusionConfig::new(pcs, challenger);
+        let (_, _, trace, _) = build_fixture(&secret, &neighbors, &nonce);
 
-        let nonce_field = nonce_field_rep(&nonce);
-        let t0 = Instant::now();
-        let trace = air.generate_trace_rows(&leaf, &neighbors, &nonce_field);
-        let gen_ms = t0.elapsed().as_secs_f64() * 1e3;
-        eprintln!("trace: rows={}, cols={}", trace.height(), trace.width());
+        // Row 1 second input (indices [HASH_SIZE..2*HASH_SIZE]) is populated with
+        // the leaf computed from row 0 inside generate_trace_rows.
+        let row1 = trace.row_slice(1).unwrap();
+        let mut leaf_from_air = [Val::from_canonical_checked(0).unwrap(); 8];
+        leaf_from_air.copy_from_slice(&row1[HASH_SIZE..(2 * HASH_SIZE)]);
 
-        let mut pv: Vec<Val> = Vec::with_capacity(3 * HASH_SIZE);
-        {
-            let last_row = trace.row_slice(trace.height() - 1).unwrap();
-            let start = trace.width() - WIDTH;
-            let end = start + HASH_SIZE;
-            pv.extend_from_slice(&last_row[start..end]);
-            pv.extend_from_slice(&nonce_field);
-            pv.extend_from_slice(&trace.values[start..end]);
-        }
-
-        let t1 = Instant::now();
-        let _proof = prove(&config, &air, trace, &pv);
-        let prove_ms = t1.elapsed().as_secs_f64() * 1e3;
-        eprintln!("timing-ms: trace_gen={:.3} prove={:.3}", gen_ms, prove_ms);
+        let leaf_expected = leaf_from_secret(&secret);
+        assert_eq!(leaf_from_air, leaf_expected);
     }
 }

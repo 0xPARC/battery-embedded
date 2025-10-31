@@ -52,19 +52,26 @@ static void print_end_stats(const char* op, const memsnap_t* before) {
 
 int main(int argc, char** argv) {
     const char* mode = (argc > 1) ? argv[1] : "both"; // modes: "zkp", "tfhe", "both"
-    // ZKP: generate public values (e.g., Merkle root)  and zk proof for a provided leaf & path
-    // Use a compile-time constant to avoid VLA warnings
-    // The ZKP trace adds an initial row for hash(leaf||nonce),
-    // so `levels + 1` must be a power of two. For a depth-32 demo, pass 31 here.
-    enum { LEVELS = 31 }; // demo depth -> rows = 32
-    uint32_t leaf8_u32[8];
+    // ZKP: generate public values (e.g., Merkle root) and zk proof for a provided path
+    // Use a compile-time constant to avoid VLA warnings.
+    // The ZKP trace includes two extra rows (leaf hash + binding),
+    // so (levels + 2) must be a power of two. For 32 rows, use 30.
+    // ZKP: generate public values (e.g., Merkle root) and zk proof for a provided path
+    // Use a compile-time constant to avoid VLA warnings.
+    // The ZKP trace includes two extra rows (leaf hash + binding),
+    // so (levels + 2) must be a power of two. For 32 rows, use 30.
+    enum { LEVELS = 30 }; // rows = LEVELS + 2 = 32
     uint32_t neighbors8_by_level_u32[LEVELS * 8];
     uint8_t sides[LEVELS];
-    for (int i = 0; i < 8; i++) leaf8_u32[i] = 4; // demo leaf values
+    // Demo neighbors/sides. Replace with real path data.
     for (size_t l = 0; l < LEVELS; l++) {
         for (int j = 0; j < 8; j++) neighbors8_by_level_u32[l*8 + j] = 3; // demo neighbors
         sides[l] = 0; // 0 = right, non-zero = left; require sides[0] == 0
     }
+    // Device secret used to derive leaf inside the circuit.
+    // Keep bytes small to ensure canonical field limbs for demo purposes.
+    uint8_t secret32[32];
+    memset(secret32, 0x11, sizeof secret32);
     uint8_t zkp_nonce[BATTERY_NONCE_LEN];
     memset(zkp_nonce, 0x11, sizeof zkp_nonce);
     mem_init();
@@ -72,8 +79,7 @@ int main(int argc, char** argv) {
     printf("[info] Packing ZKP args...\n");
     unsigned char args_buf[1<<16];
     size_t args_len = 0;
-    int rc = zkp_pack_args(leaf8_u32,
-                           neighbors8_by_level_u32,
+    int rc = zkp_pack_args(neighbors8_by_level_u32,
                            sides,
                            LEVELS,
                            args_buf,
@@ -90,7 +96,8 @@ int main(int argc, char** argv) {
         unsigned char proof_buf[1<<19]; // 0.5 MiB demo buffer
         size_t proof_written = 0;
         // zkp_generate_proof returns a postcard-serialized bundle: (proof, public_values)
-        rc = zkp_generate_proof(args_buf,
+        rc = zkp_generate_proof(secret32,
+                                args_buf,
                                 args_len,
                                 zkp_nonce,
                                 proof_buf,

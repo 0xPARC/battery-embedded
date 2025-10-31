@@ -86,23 +86,44 @@ int32_t tfhe_pk_encrypt_raw(const uint8_t *pk,
                             uint64_t *b_out);
 
 /**
- * Generate a Merkle-path ZK proof using a single opaque serialized argument, with a separate nonce.
+ * Generate a Merkle-path ZK proof using the device secret and opaque path args, with a separate nonce.
+ * Client/server contract:
+ * - Server returns an opaque `args` postcard containing only the Merkle path:
+ *   `{ neighbors8_by_level_u32, sides_bitflags }` with `levels = neighbors.len()`.
+ * - Client calls this function with its 32‑byte `secret32`, the server `args`, and a 32‑byte `nonce32`.
+ * - The leaf is computed in‑circuit as `leaf = Poseidon2(secret)`; callers MUST NOT pre-hash or pass the leaf.
+ *
  * Inputs:
- * - `args`/`args_len`: postcard-serialized OpaqueMerklePathArgs
- * - `nonce32` (len=`BATTERY_NONCE_LEN`)
+ * - `secret32`: 32‑byte device secret. Each 4‑byte limb must be canonical for the field; otherwise `BATTERY_ERR_INPUT`.
+ * - `args`/`args_len`: postcard‑serialized OpaqueMerklePathArgs (neighbors + sides only).
+ *   Constraints: `levels > 0`, `sides.len() == levels`, `sides[lvl] ∈ {0,1}`, and `sides[0] == 0`.
+ *   The prover requires `rows = levels + 2` to be a power of two.
+ * - `nonce32` (len=`BATTERY_NONCE_LEN`).
+ *
  * Outputs:
- * - `proof_out`/`proof_out_len`: caller-provided buffer for postcard-serialized bundle:
- *   (proof, public_values) where public_values = [root(8) | nonce_field(8) | hash(leaf||nonce)(8)].
- * - `out_proof_written`: number of bytes written. If too small, returns `BATTERY_ERR_BUFSZ`.
+ * - `proof_out`/`proof_out_len`: caller‑provided buffer for the postcard‑serialized bundle
+ *   `(proof, public_values)` where `public_values = [root(8) | nonce_field(8) | hash(leaf||nonce)(8)]`.
+ * - `out_proof_written`: number of bytes written; if buffer too small, returns `BATTERY_ERR_BUFSZ` and sets the required size.
  *
  * Serialization: postcard 1.x (stable).
  */
-int32_t zkp_generate_proof(const uint8_t *args,
+int32_t zkp_generate_proof(const uint8_t *secret32,
+                           const uint8_t *args,
                            size_t args_len,
                            const uint8_t *nonce32,
                            uint8_t *proof_out,
                            size_t proof_out_len,
                            size_t *out_proof_written);
+
+/**
+ * Compute the Poseidon2 leaf commitment from a 32‑byte secret.
+ * - `secret32`: 32‑byte secret
+ * - `leaf_out_u32`: pointer to 8 u32 outputs (canonical field limbs)
+ * - `leaf_out_len`: must be 8
+ */
+int32_t zkp_compute_leaf_from_secret(const uint8_t *secret32,
+                                     uint32_t *leaf_out_u32,
+                                     size_t leaf_out_len);
 
 int32_t aes_ctr_encrypt(uint8_t *buf,
                         size_t len,
@@ -122,11 +143,17 @@ int32_t tfhe_pack_public_key(const uint64_t *pk_a,
                              size_t *out_written);
 
 /**
- * Pack Merkle path arguments into a postcard-serialized opaque buffer.
+ * Pack Merkle path arguments into a postcard‑serialized opaque buffer.
+ * Inputs:
+ * - `neighbors8_by_level_u32`: pointer to `levels * 8` u32 values, row‑major by level; each chunk of 8 is a canonical field element array.
+ * - `sides_bitflags`: pointer to `levels` bytes with values in `{0,1}`; `0`=neighbor on the right, `1`=neighbor on the left.
+ * - `levels`: number of Merkle levels in the path (must be `> 0`). The prover stack requires `(levels + 2)` to be a power of two.
+ * Notes:
+ * - Enforce uniqueness by choosing `sides[0] == 0` on the server.
+ * - The resulting buffer is suitable for `zkp_generate_proof(secret32, args, nonce32, ...)`.
  * Serialization: postcard 1.x (stable).
  */
-int32_t zkp_pack_args(const uint32_t *leaf8_u32,
-                      const uint32_t *neighbors8_by_level_u32,
+int32_t zkp_pack_args(const uint32_t *neighbors8_by_level_u32,
                       const uint8_t *sides_bitflags,
                       size_t levels,
                       uint8_t *out,
