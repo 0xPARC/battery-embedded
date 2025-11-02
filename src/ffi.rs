@@ -3,8 +3,10 @@ use crate::aes_ctr::aes_ctr_encrypt_in_place;
 use crate::poly::Poly;
 use crate::tfhe::encode_bits_as_trlwe_plaintext;
 use crate::tfhe::{TFHEPublicKey, TRLWECiphertext};
+use crate::zkp::HASH_SIZE;
 use crate::zkp::{self, MerkleInclusionProof, Val};
 
+use p3_field::PrimeField32;
 use p3_field::integers::QuotientMap;
 use rand::SeedableRng;
 use rand_chacha::ChaCha20Rng;
@@ -134,6 +136,43 @@ pub extern "C" fn tfhe_pk_encrypt(
     }
 }
 
+/// Compute the parent hash from the two secret leaves using the same Poseidon2 parameters
+/// and orientation used in the Merkle tree: parent = H(leaf || sibling) with selector=0.
+/// Inputs:
+/// - `secret16_u32`: two concatenated leaves as 16 u32 words.
+/// Outputs:
+/// - `parent8_u32_out`: 8 u32 words with the parent field elements.
+#[unsafe(no_mangle)]
+pub extern "C" fn zkp_parent_from_secret(
+    secret16_u32: *const u32,
+    parent8_u32_out: *mut u32,
+) -> i32 {
+    if secret16_u32.is_null() || parent8_u32_out.is_null() {
+        return BATTERY_ERR_NULL;
+    }
+    let words = unsafe { core::slice::from_raw_parts(secret16_u32, 16) };
+    let mut leaf = [Val::from_canonical_checked(0).unwrap(); 8];
+    let mut sib = [Val::from_canonical_checked(0).unwrap(); 8];
+    for i in 0..8 {
+        match Val::from_canonical_checked(words[i]) {
+            Some(v) => leaf[i] = v,
+            None => return BATTERY_ERR_INPUT,
+        }
+        match Val::from_canonical_checked(words[8 + i]) {
+            Some(v) => sib[i] = v,
+            None => return BATTERY_ERR_INPUT,
+        }
+    }
+
+    // Compute parent via reusable hashing logic
+    let parent = zkp::hash::parent_from_pair(&leaf, &sib);
+    let out = unsafe { core::slice::from_raw_parts_mut(parent8_u32_out, 8) };
+    for i in 0..8 {
+        out[i] = parent[i].as_canonical_u32();
+    }
+    BATTERY_OK
+}
+
 /// Encrypt bytes and return raw TRLWE ciphertext coefficients (no serialization).
 /// a_out and b_out must each point to arrays of length TFHE_TRLWE_N.
 #[unsafe(no_mangle)]
@@ -150,31 +189,38 @@ pub extern "C" fn tfhe_pk_encrypt_raw(
     if pk.is_null() || bytes.is_null() || seed32.is_null() || a_out.is_null() || b_out.is_null() {
         return BATTERY_ERR_NULL;
     }
+
     if seed_len != BATTERY_SEED_LEN {
         return BATTERY_ERR_SEEDLEN;
     }
+
     let bit_len = bytes_len.saturating_mul(8);
     if bit_len > TFHE_TRLWE_N {
         return BATTERY_ERR_BADLEN;
     }
+
     // Deserialize PK
     let pk_bytes = unsafe { core::slice::from_raw_parts(pk, pk_len) };
     let pk: TFHEPublicKey<TFHE_TRLWE_N, Q> = match postcard::from_bytes(pk_bytes) {
         Ok(v) => v,
         Err(_) => return BATTERY_ERR_INPUT,
     };
+
     // Build plaintext from bytes
     let data = unsafe { core::slice::from_raw_parts(bytes, bytes_len) };
     let pt_poly = encode_bits_as_trlwe_plaintext::<TFHE_TRLWE_N, Q>(data, bit_len);
+
     // RNG
     let seed = unsafe { core::slice::from_raw_parts(seed32, BATTERY_SEED_LEN) };
     let mut seed_arr = [0u8; BATTERY_SEED_LEN];
     seed_arr.copy_from_slice(seed);
     let mut rng = ChaCha20Rng::from_seed(seed_arr);
+
     // Encrypt
     let ct_obj = TRLWECiphertext::<TFHE_TRLWE_N, Q>::encrypt_with_public_key::<_, ERR_B>(
         &pt_poly, &pk, &mut rng,
     );
+
     // Write raw coefficients
     let a_dst = unsafe { core::slice::from_raw_parts_mut(a_out, TFHE_TRLWE_N) };
     let b_dst = unsafe { core::slice::from_raw_parts_mut(b_out, TFHE_TRLWE_N) };
@@ -193,14 +239,16 @@ struct ZkpProofBundle(
 
 #[derive(serde::Serialize, serde::Deserialize)]
 struct OpaqueMerklePathArgs {
-    leaf8_u32: [u32; 8],
+    // Parent-to-root siblings; the device supplies both leaves in `secret`.
     neighbors8_by_level_u32: Vec<[u32; 8]>,
     sides_bitflags: Vec<u8>,
 }
 
-/// Generate a Merkle-path ZK proof using a single opaque serialized argument, with a separate nonce.
+/// Generate a Merkle-path ZK proof. The device provides both secret leaves,
+/// and the opaque args contain the parent→root path supplied by the server.
 /// Inputs:
-/// - `args`/`args_len`: postcard-serialized OpaqueMerklePathArgs
+/// - `secret16_u32`: two concatenated leaves as 16 `u32` words: [leaf(8) | sibling(8)]
+/// - `args`/`args_len`: postcard-serialized OpaqueMerklePathArgs (parent→root)
 /// - `nonce32` (len=`BATTERY_NONCE_LEN`)
 /// Outputs:
 /// - `proof_out`/`proof_out_len`: caller-provided buffer for postcard-serialized bundle:
@@ -210,6 +258,7 @@ struct OpaqueMerklePathArgs {
 /// Serialization: postcard 1.x (stable).
 #[unsafe(no_mangle)]
 pub extern "C" fn zkp_generate_proof(
+    secret16_u32: *const u32,
     args: *const u8,
     args_len: usize,
     nonce32: *const u8,
@@ -217,7 +266,12 @@ pub extern "C" fn zkp_generate_proof(
     proof_out_len: usize,
     out_proof_written: *mut usize,
 ) -> i32 {
-    if args.is_null() || nonce32.is_null() || proof_out.is_null() || out_proof_written.is_null() {
+    if secret16_u32.is_null()
+        || args.is_null()
+        || nonce32.is_null()
+        || proof_out.is_null()
+        || out_proof_written.is_null()
+    {
         return BATTERY_ERR_NULL;
     }
     let args_bytes = unsafe { core::slice::from_raw_parts(args, args_len) };
@@ -225,27 +279,35 @@ pub extern "C" fn zkp_generate_proof(
         Ok(v) => v,
         Err(_) => return BATTERY_ERR_INPUT,
     };
-    let levels = args.neighbors8_by_level_u32.len();
-    if levels == 0 || args.sides_bitflags.len() != levels {
+    let levels_parent = args.neighbors8_by_level_u32.len();
+    if args.sides_bitflags.len() != levels_parent {
         return BATTERY_ERR_INPUT;
     }
-    // The ZKP trace includes an extra first row for hash(leaf||nonce),
-    // so the prover requires (levels + 1) to be a power of two.
-    let rows = levels + 1;
+    // rows = parent-levels + 2 (row0: hash(leaf||nonce), row1: hash(leaf||sibling)) must be power of two
+    let rows = levels_parent + 2;
     if !rows.is_power_of_two() {
         return BATTERY_ERR_INPUT;
     }
     let nonce = unsafe { core::slice::from_raw_parts(nonce32, BATTERY_NONCE_LEN) };
     let mut nonce_arr = [0u8; BATTERY_NONCE_LEN];
     nonce_arr.copy_from_slice(nonce);
+    // Parse secret: [leaf | sibling]
+    let secret_words = unsafe { core::slice::from_raw_parts(secret16_u32, 16) };
     let mut leaf = [Val::from_canonical_checked(0).unwrap(); 8];
+    let mut sibling = [Val::from_canonical_checked(0).unwrap(); 8];
     for i in 0..8 {
-        match Val::from_canonical_checked(args.leaf8_u32[i]) {
+        match Val::from_canonical_checked(secret_words[i]) {
             Some(v) => leaf[i] = v,
             None => return BATTERY_ERR_INPUT,
         }
+        match Val::from_canonical_checked(secret_words[8 + i]) {
+            Some(v) => sibling[i] = v,
+            None => return BATTERY_ERR_INPUT,
+        }
     }
-    let mut neighbors: Vec<([Val; 8], bool)> = Vec::with_capacity(levels);
+    let mut neighbors: Vec<([Val; 8], bool)> = Vec::with_capacity(levels_parent + 1);
+    // Prepend sibling at side=0 (right neighbor)
+    neighbors.push((sibling, false));
     for (lvl, neigh) in args.neighbors8_by_level_u32.iter().enumerate() {
         let mut arr = [Val::from_canonical_checked(0).unwrap(); 8];
         for j in 0..8 {
@@ -267,7 +329,7 @@ pub extern "C" fn zkp_generate_proof(
     let (proof, public_values) = zkp::generate_proof(&leaf, &neighbors, &nonce_arr);
     // Public values layout is fixed at 24 = 3 * HASH_SIZE elements:
     //   [root(8) | nonce_field(8) | hash(leaf||nonce)(8)].
-    if public_values.len() != 3 * zkp::HASH_SIZE {
+    if public_values.len() != 3 * HASH_SIZE {
         return BATTERY_ERR_INPUT;
     }
     let bundle = ZkpProofBundle(proof, public_values);
@@ -363,7 +425,6 @@ pub extern "C" fn tfhe_pack_public_key(
 /// Serialization: postcard 1.x (stable).
 #[unsafe(no_mangle)]
 pub extern "C" fn zkp_pack_args(
-    leaf8_u32: *const u32,
     neighbors8_by_level_u32: *const u32,
     sides_bitflags: *const u8,
     levels: usize,
@@ -371,20 +432,14 @@ pub extern "C" fn zkp_pack_args(
     out_len: usize,
     out_written: *mut usize,
 ) -> i32 {
-    if leaf8_u32.is_null()
-        || neighbors8_by_level_u32.is_null()
+    if neighbors8_by_level_u32.is_null()
         || sides_bitflags.is_null()
         || out.is_null()
         || out_written.is_null()
     {
         return BATTERY_ERR_NULL;
     }
-    if levels == 0 {
-        return BATTERY_ERR_INPUT;
-    }
-    let leaf_slice = unsafe { core::slice::from_raw_parts(leaf8_u32, 8) };
-    let mut leaf = [0u32; 8];
-    leaf.copy_from_slice(leaf_slice);
+    // levels may be 0 when the parent is the root
     let neigh_u32 = unsafe { core::slice::from_raw_parts(neighbors8_by_level_u32, levels * 8) };
     let sides = unsafe { core::slice::from_raw_parts(sides_bitflags, levels) };
     let mut neighbors: Vec<[u32; 8]> = Vec::with_capacity(levels);
@@ -396,7 +451,6 @@ pub extern "C" fn zkp_pack_args(
     }
     let sides_vec = sides.to_vec();
     let args = OpaqueMerklePathArgs {
-        leaf8_u32: leaf,
         neighbors8_by_level_u32: neighbors,
         sides_bitflags: sides_vec,
     };
@@ -475,15 +529,13 @@ mod tests {
     #[test]
     fn zkp_proof_buf_too_small() {
         // Pack args and then request proof with zero-sized buffer.
-        // Trace rows = levels + 1 must be a power of two.
-        let levels = 31usize; // rows = 32
-        let leaf = [4u32; 8];
+        // rows = levels(parent->root) + 2 must be a power of two.
+        let levels = 30usize; // rows = 32 after prepend
         let neighbors = vec![3u32; levels * 8];
         let sides = vec![0u8; levels];
         let mut args_buf = vec![0u8; 1 << 16];
         let mut args_len: usize = 0;
         let rc = zkp_pack_args(
-            leaf.as_ptr(),
             neighbors.as_ptr(),
             sides.as_ptr(),
             levels,
@@ -492,10 +544,22 @@ mod tests {
             &mut args_len as *mut usize,
         );
         assert_eq!(rc, BATTERY_OK);
+        // Secret = [leaf | sibling]
+        let secret: [u32; 16] = {
+            let mut s = [0u32; 16];
+            for i in 0..8 {
+                s[i] = 4;
+            }
+            for i in 0..8 {
+                s[8 + i] = 3;
+            }
+            s
+        };
         let nonce = [1u8; BATTERY_NONCE_LEN];
         let mut proof_written = 0usize;
         let mut dummy: u8 = 0;
         let rc2 = zkp_generate_proof(
+            secret.as_ptr(),
             args_buf.as_ptr(),
             args_len,
             nonce.as_ptr(),
@@ -509,15 +573,13 @@ mod tests {
 
     #[test]
     fn zkp_proof_bundle_roundtrip() {
-        // Build opaque args for a valid path (rows = levels + 1 = 32)
-        let levels = 31usize;
-        let leaf = [4u32; 8];
+        // Build opaque args for a valid path (parent->root). rows = levels + 2 = 32
+        let levels = 30usize;
         let neighbors = vec![3u32; levels * 8];
         let sides = vec![0u8; levels];
         let mut args_buf = vec![0u8; 1 << 16];
         let mut args_len: usize = 0;
         let rc = zkp_pack_args(
-            leaf.as_ptr(),
             neighbors.as_ptr(),
             sides.as_ptr(),
             levels,
@@ -528,10 +590,21 @@ mod tests {
         assert_eq!(rc, BATTERY_OK);
 
         // Generate the bundle and deserialize it
+        let secret: [u32; 16] = {
+            let mut s = [0u32; 16];
+            for i in 0..8 {
+                s[i] = 4;
+            }
+            for i in 0..8 {
+                s[8 + i] = 3;
+            }
+            s
+        };
         let nonce = [0x11u8; BATTERY_NONCE_LEN];
         let mut out = vec![0u8; 1 << 20];
         let mut written = 0usize;
         let rc2 = zkp_generate_proof(
+            secret.as_ptr(),
             args_buf.as_ptr(),
             args_len,
             nonce.as_ptr(),
@@ -544,10 +617,29 @@ mod tests {
 
         let bundle: ZkpProofBundle = postcard::from_bytes(&out[..written]).unwrap();
         // Expect exactly 3 * HASH_SIZE public values: root(8) | nonce_field(8) | hash(leaf||nonce)(8)
-        assert_eq!(bundle.1.len(), 3 * zkp::HASH_SIZE);
+        assert_eq!(bundle.1.len(), 3 * HASH_SIZE);
         // Re-serialize and deserialize again to check roundtrip stability of the bundle
         let bytes2 = postcard::to_allocvec(&bundle).unwrap();
         let bundle2: ZkpProofBundle = postcard::from_bytes(&bytes2).unwrap();
         assert_eq!(bundle2.1, bundle.1);
+    }
+
+    #[test]
+    fn parent_from_secret_shape() {
+        let secret: [u32; 16] = {
+            let mut s = [0u32; 16];
+            for i in 0..8 {
+                s[i] = 4;
+            }
+            for i in 0..8 {
+                s[8 + i] = 3;
+            }
+            s
+        };
+        let mut out = [0u32; 8];
+        let rc = zkp_parent_from_secret(secret.as_ptr(), out.as_mut_ptr());
+        assert_eq!(rc, BATTERY_OK);
+        // basic sanity: not all zeros (extremely unlikely), stays u32 domain
+        assert!(out.iter().any(|&x| x != 0));
     }
 }
