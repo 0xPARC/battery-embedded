@@ -625,7 +625,9 @@ mod tests {
     }
 
     #[test]
-    fn parent_from_secret_shape() {
+    fn parent_from_secret() {
+        use crate::zkp::hash::parent_from_pair;
+        // Build two leaves as 16 u32 words: [leaf(8) | sibling(8)]
         let secret: [u32; 16] = {
             let mut s = [0u32; 16];
             for i in 0..8 {
@@ -636,10 +638,21 @@ mod tests {
             }
             s
         };
+
+        // Compute expected parent via hash util
+        let mut leaf = [Val::from_canonical_checked(0).unwrap(); 8];
+        let mut sib = [Val::from_canonical_checked(0).unwrap(); 8];
+        for i in 0..8 {
+            leaf[i] = Val::from_canonical_checked(secret[i]).unwrap();
+            sib[i] = Val::from_canonical_checked(secret[8 + i]).unwrap();
+        }
+        let expected = parent_from_pair(&leaf, &sib);
+
         let mut out = [0u32; 8];
         let rc = zkp_parent_from_secret(secret.as_ptr(), out.as_mut_ptr());
         assert_eq!(rc, BATTERY_OK);
-        // basic sanity: not all zeros (extremely unlikely), stays u32 domain
-        assert!(out.iter().any(|&x| x != 0));
+        for i in 0..8 {
+            assert_eq!(out[i], expected[i].as_canonical_u32());
+        }
     }
 }
