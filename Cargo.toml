@@ -23,6 +23,10 @@ strip = true
 incremental = false
 panic = "abort"
 
+[profile.dev]
+# no_std builds require aborting panics; match release profile
+panic = "abort"
+
 [dependencies]
 rand_chacha = { version = "0.9", default-features = false }
 rand = { version = "0.9", default-features = false }
