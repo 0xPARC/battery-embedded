@@ -30,8 +30,6 @@ panic = "abort"
 [dependencies]
 rand_chacha = { version = "0.9", default-features = false }
 rand = { version = "0.9", default-features = false }
-aes = { version = "0.8.4", default-features = false }
-ctr = "0.9.2"
 p3-air = "0.3.0"
 p3-challenger = "0.3.0"
 p3-commit = "0.3.0"

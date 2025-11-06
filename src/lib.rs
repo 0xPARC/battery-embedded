@@ -6,7 +6,6 @@ extern crate std;
 #[cfg(all(not(feature = "std"), feature = "alloc"))]
 extern crate alloc;
 
-pub mod aes_ctr;
 pub mod tfhe;
 
 #[cfg(any(feature = "std", feature = "alloc"))]

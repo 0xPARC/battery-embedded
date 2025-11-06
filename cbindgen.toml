@@ -22,19 +22,11 @@ include = [
   "BATTERY_ERR_BUFSZ",
   "BATTERY_NONCE_LEN",
   "BATTERY_SEED_LEN",
-  "AES_KEY_LEN",
-  "AES_IV_LEN",
-  "tfhe_pk_encrypt_aes_key",
   "tfhe_pk_encrypt",
   "tfhe_pk_encrypt_raw",
   "tfhe_pack_public_key",
-  "aes_ctr_encrypt",
   "zkp_generate_proof",
   "zkp_pack_args",
   "BATTERY_API_VERSION",
   "battery_api_version",
-]
-exclude = [
-  "tfhe_pk_encrypt_aes_key_legacy",
-  "zkp_generate_proof_legacy",
 ]

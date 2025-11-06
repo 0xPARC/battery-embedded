@@ -1,5 +1,4 @@
 use super::Vec;
-use crate::aes_ctr::aes_ctr_encrypt_in_place;
 use crate::poly::Poly;
 use crate::tfhe::encode_bits_as_trlwe_plaintext;
 use crate::tfhe::{TFHEPublicKey, TRLWECiphertext};
@@ -26,44 +25,12 @@ pub const BATTERY_ERR_BUFSZ: i32 = -10; // output buffer too small
 
 pub const BATTERY_SEED_LEN: usize = 32; // TFHE RNG seed length
 pub const BATTERY_NONCE_LEN: usize = 32; // ZKP Fiat–Shamir nonce length
-pub const AES_KEY_LEN: usize = 16;
-pub const AES_IV_LEN: usize = 16;
 
 pub const BATTERY_API_VERSION: u32 = 1;
 
 #[unsafe(no_mangle)]
 pub extern "C" fn battery_api_version() -> u32 {
     BATTERY_API_VERSION
-}
-
-// ------------- TFHE -------------
-
-/// DEPRECATED: use `tfhe_pk_encrypt` for arbitrary-length byte payloads.
-/// This wrapper now forwards to `tfhe_pk_encrypt` with `bytes_len = AES_KEY_LEN`.
-/// Inputs/outputs are unchanged and remain opaque postcard buffers.
-#[deprecated(note = "Use tfhe_pk_encrypt for arbitrary payloads")]
-#[unsafe(no_mangle)]
-pub extern "C" fn tfhe_pk_encrypt_aes_key(
-    pk: *const u8,
-    pk_len: usize,
-    aes_key16: *const u8,
-    seed32: *const u8,
-    seed_len: usize,
-    ct_out: *mut u8,
-    ct_out_len: usize,
-    out_written: *mut usize,
-) -> i32 {
-    tfhe_pk_encrypt(
-        pk,
-        pk_len,
-        aes_key16,
-        AES_KEY_LEN,
-        seed32,
-        seed_len,
-        ct_out,
-        ct_out_len,
-        out_written,
-    )
 }
 
 /// Encrypt an arbitrary byte string by encoding its bits LSB-first into a TRLWE plaintext
@@ -354,35 +321,7 @@ pub extern "C" fn zkp_generate_proof(
     }
 }
 
-// ------------- AES-CTR -------------
-
-#[unsafe(no_mangle)]
-pub extern "C" fn aes_ctr_encrypt(
-    buf: *mut u8,
-    len: usize,
-    key16: *const u8,
-    key_len: usize,
-    iv16: *const u8,
-    iv_len: usize,
-) -> i32 {
-    if buf.is_null() || key16.is_null() || iv16.is_null() {
-        return BATTERY_ERR_NULL;
-    }
-    if key_len != AES_KEY_LEN || iv_len != AES_IV_LEN {
-        return BATTERY_ERR_BADLEN;
-    }
-    let slice = unsafe { core::slice::from_raw_parts_mut(buf, len) };
-    let key_slice = unsafe { core::slice::from_raw_parts(key16, AES_KEY_LEN) };
-    let iv_slice = unsafe { core::slice::from_raw_parts(iv16, AES_IV_LEN) };
-    let mut key = [0u8; AES_KEY_LEN];
-    let mut iv = [0u8; AES_IV_LEN];
-    key.copy_from_slice(key_slice);
-    iv.copy_from_slice(iv_slice);
-    aes_ctr_encrypt_in_place(&key, &iv, slice);
-    BATTERY_OK
-}
-
-/// Pack a TFHE public key from `u64[N]` arrays into a postcard-serialized opaque buffer.
+// Pack a TFHE public key from `u64[N]` arrays into a postcard-serialized opaque buffer.
 /// Serialization: postcard 1.x (stable).
 #[unsafe(no_mangle)]
 pub extern "C" fn tfhe_pack_public_key(
@@ -507,15 +446,15 @@ mod tests {
         let b = Poly::<TFHE_TRLWE_N, Q>::from_coeffs_mod_q_slice(&[0u64; TFHE_TRLWE_N]);
         let pk = TFHEPublicKey::<TFHE_TRLWE_N, Q> { a, b };
         let pk_bytes = postcard::to_allocvec(&pk).unwrap();
-        let aes_key = [0u8; AES_KEY_LEN];
+        let data = [0u8; 16];
         let seed = [7u8; BATTERY_SEED_LEN];
         let mut out_written = 0usize;
         let mut dummy: u8 = 0;
         let rc = tfhe_pk_encrypt(
             pk_bytes.as_ptr(),
             pk_bytes.len(),
-            aes_key.as_ptr(),
-            AES_KEY_LEN,
+            data.as_ptr(),
+            16,
             seed.as_ptr(),
             BATTERY_SEED_LEN,
             &mut dummy as *mut u8,

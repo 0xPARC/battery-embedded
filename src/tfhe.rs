@@ -6,8 +6,6 @@ use rand::Rng;
 
 pub type TRLWEPlaintext<const N: usize, const Q: u64> = Poly<N, Q>;
 
-// ---------------- Keys and ciphertext ----------------
-
 #[cfg(test)]
 pub struct TFHESecretKey<const N: usize, const Q: u64> {
     pub s: Poly<N, Q>,
@@ -75,8 +73,6 @@ impl<const N: usize, const Q: u64> TFHEPublicKey<N, Q> {
     }
 }
 
-// ---------------- Helpers ----------------
-
 /// Encode an arbitrary bitstring into a TRLWE plaintext: 1 -> Q/4, 0 -> 0.
 /// Bits are read LSB-first within each byte. Encodes up to `min(N, bit_len)` bits.
 #[inline]
@@ -94,8 +90,6 @@ pub fn encode_bits_as_trlwe_plaintext<const N: usize, const Q: u64>(
     }
     out
 }
-
-// ---------------- Tests ----------------
 
 #[cfg(test)]
 mod tests {

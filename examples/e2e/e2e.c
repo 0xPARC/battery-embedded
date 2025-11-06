@@ -105,15 +105,13 @@ int main(int argc, char** argv) {
         if (strcmp(mode, "zkp") == 0) return 0;
     }
 
-    // TFHE: encrypt an AES-128 key under a TFHE public key
+    // TFHE: encrypt demo bytes under a TFHE public key
     printf("[info] TFHE params: TRLWE_N=%u\n", (unsigned)TFHE_TRLWE_N);
-    const uint8_t aes_key[AES_KEY_LEN] = {
-        0x00,0x01,0x02,0x03,0x04,0x05,0x06,0x07,
-        0x08,0x09,0x0a,0x0b,0x0c,0x0d,0x0e,0x0f
-    };
-
-    printf("[info] AES-128 key: ");
-    for (int i = 0; i < 16; i++) printf("%02x", aes_key[i]);
+    enum { DEMO_LEN = 16 };
+    uint8_t demo_bytes[DEMO_LEN];
+    for (int i = 0; i < DEMO_LEN; i++) demo_bytes[i] = (uint8_t)i;
+    printf("[info] Demo bytes[0..15]: ");
+    for (int i = 0; i < 16; i++) printf("%02x", demo_bytes[i]);
     printf("\n");
 
     // Demo public key arrays. Replace with a real PK.
@@ -148,8 +146,8 @@ int main(int argc, char** argv) {
 
         // Baseline before TFHE encrypt
         memsnap_t base; read_memsnap(&base);
-        printf("[info] Encrypting AES key (generic tfhe_pk_encrypt)...\n");
-        rc = tfhe_pk_encrypt(pk_buf, pk_len, aes_key, AES_KEY_LEN, seed, BATTERY_SEED_LEN,
+        printf("[info] Encrypting demo bytes (tfhe_pk_encrypt)...\n");
+        rc = tfhe_pk_encrypt(pk_buf, pk_len, demo_bytes, DEMO_LEN, seed, BATTERY_SEED_LEN,
                                      ct_buf, sizeof ct_buf, &ct_written);
         if (rc != BATTERY_OK) {
             fprintf(stderr, "tfhe_pk_encrypt failed: %s (%d)\n", battery_strerror(rc), rc);
@@ -159,25 +157,6 @@ int main(int argc, char** argv) {
         print_end_stats("tfhe_pk_encrypt", &base);
         if (strcmp(mode, "tfhe") == 0) return 0;
     }
-
-    // E2E: encrypt some demo data under AES-128-CTR using the plaintext AES key
-    uint8_t data[64];
-    for (int i = 0; i < 64; i++) data[i] = (uint8_t)i; // demo data 0..63
-    uint8_t iv[16];
-    memset(iv, 0x23, sizeof iv); // demo IV (non-random) — replace in production
-    printf("[info] AES-CTR IV: ");
-    for (int i = 0; i < 16; i++) printf("%02x", iv[i]);
-    printf("\n[info] AES-CTR plaintext[0..15]: ");
-    for (int i = 0; i < 16; i++) printf("%02x", data[i]);
-    printf("\n[info] Encrypting with AES-CTR...\n");
-    if (aes_ctr_encrypt(data, sizeof(data), aes_key, AES_KEY_LEN, iv, AES_IV_LEN) != BATTERY_OK) {
-        fprintf(stderr, "aes_ctr_encrypt failed\n");
-        return 1;
-    }
-    // No memory print here; AES is usually negligible vs ZKP/TFHE
-    printf("[info] AES-CTR ciphertext[0..15]: ");
-    for (int i = 0; i < 16; i++) printf("%02x", data[i]);
-    printf("\n");
 
     return 0;
 }

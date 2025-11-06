@@ -33,29 +33,11 @@
 
 #define BATTERY_NONCE_LEN 32
 
-#define AES_KEY_LEN 16
-
-#define AES_IV_LEN 16
-
 #define BATTERY_API_VERSION 1
 
 void rust_eh_personality(void);
 
 uint32_t battery_api_version(void);
-
-/**
- * DEPRECATED: use `tfhe_pk_encrypt` for arbitrary-length byte payloads.
- * This wrapper now forwards to `tfhe_pk_encrypt` with `bytes_len = AES_KEY_LEN`.
- * Inputs/outputs are unchanged and remain opaque postcard buffers.
- */
-int32_t tfhe_pk_encrypt_aes_key(const uint8_t *pk,
-                                size_t pk_len,
-                                const uint8_t *aes_key16,
-                                const uint8_t *seed32,
-                                size_t seed_len,
-                                uint8_t *ct_out,
-                                size_t ct_out_len,
-                                size_t *out_written);
 
 /**
  * Encrypt an arbitrary byte string by encoding its bits LSB-first into a TRLWE plaintext
@@ -117,15 +99,7 @@ int32_t zkp_generate_proof(const uint32_t *secret16_u32,
                            size_t proof_out_len,
                            size_t *out_proof_written);
 
-int32_t aes_ctr_encrypt(uint8_t *buf,
-                        size_t len,
-                        const uint8_t *key16,
-                        size_t key_len,
-                        const uint8_t *iv16,
-                        size_t iv_len);
-
 /**
- * Pack a TFHE public key from `u64[N]` arrays into a postcard-serialized opaque buffer.
  * Serialization: postcard 1.x (stable).
  */
 int32_t tfhe_pack_public_key(const uint64_t *pk_a,

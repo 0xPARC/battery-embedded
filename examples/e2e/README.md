@@ -1,4 +1,4 @@
-# FFI C Example: E2E — TFHE public-key encryption, AES-CTR, and ZKP proof
+# FFI C Example: E2E — TFHE public-key encryption and ZKP proof
 
 This example demonstrates how to use the generated C bindings to call the TFHE public‑key encryption from C and how to generate a ZK proof.
 
@@ -19,8 +19,7 @@ This example demonstrates how to use the generated C bindings to call the TFHE p
 ## What it does
 
 - Creates dummy public key arrays `(pk_a, pk_b)`; replace with a real key in practice.
-- Calls `tfhe_pk_encrypt` to encode arbitrary bytes (here: a 16‑byte AES‑128 key) into the plaintext polynomial and encrypt it with the TFHE public key.
-- Calls `aes_ctr_encrypt` to encrypt 64 bytes with that AES key and prints the first 16 bytes of ciphertext.
+- Calls `tfhe_pk_encrypt` to encode and encrypt 16 demo bytes into the plaintext polynomial with the TFHE public key.
 - Calls `zkp_generate_proof` to produce a STARK proof. The device passes both secret leaves (`secret16_u32 = [leaf(8) | sibling(8)]`),
   and the server supplies an opaque postcard for the parent→root path (`zkp_pack_args`). The function returns an opaque postcard bundle
   containing `(proof, public_values)` where `public_values` is exactly 24 field elements in this layout:
