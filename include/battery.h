@@ -15,7 +15,7 @@
 
 #define HASH_SIZE 8
 
-#define TFHE_TRLWE_N 1024
+#define TFHE_TRLWE_N (1 << 10)
 
 #define BATTERY_OK 0
 

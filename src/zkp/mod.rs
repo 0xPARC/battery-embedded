@@ -413,7 +413,11 @@ mod test {
         let mut digest = parent_from_pair(&leaf, &sibling);
         for i in 1..neighbors.len() {
             let (ref n, is_left) = neighbors[i];
-            digest = if is_left { parent_from_pair(n, &digest) } else { parent_from_pair(&digest, n) };
+            digest = if is_left {
+                parent_from_pair(n, &digest)
+            } else {
+                parent_from_pair(&digest, n)
+            };
         }
         let expected_root = digest;
 
