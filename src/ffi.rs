@@ -11,9 +11,9 @@ use rand::SeedableRng;
 use rand_chacha::ChaCha20Rng;
 
 // Public constants for FFI
-pub const TFHE_TRLWE_N: usize = 1 << 10;
-const Q: u64 = 1 << 50;
-const ERR_B: u64 = 250;
+pub const TFHE_TRLWE_N: usize = 1 << 9;
+pub const Q: u64 = 1 << 50;
+pub const ERR_B: u64 = 250;
 
 // Unified FFI status and size constants (project‑wide)
 pub const BATTERY_OK: i32 = 0;
@@ -435,7 +435,10 @@ mod tests {
         // Strict: written equals exact postcard size and bytes match
         let a_poly = Poly::<TFHE_TRLWE_N, Q>::from_coeffs_mod_q_slice(&a);
         let b_poly = Poly::<TFHE_TRLWE_N, Q>::from_coeffs_mod_q_slice(&b);
-        let expected_pk = TFHEPublicKey::<TFHE_TRLWE_N, Q> { a: a_poly, b: b_poly };
+        let expected_pk = TFHEPublicKey::<TFHE_TRLWE_N, Q> {
+            a: a_poly,
+            b: b_poly,
+        };
         let expected_bytes = postcard::to_allocvec(&expected_pk).unwrap();
         assert_eq!(written, expected_bytes.len());
         assert_eq!(&buf[..written], expected_bytes.as_slice());
@@ -465,9 +468,7 @@ mod tests {
         seed_arr.copy_from_slice(&seed);
         let mut rng = ChaCha20Rng::from_seed(seed_arr);
         let ct_obj = TRLWECiphertext::<TFHE_TRLWE_N, Q>::encrypt_with_public_key::<_, ERR_B>(
-            &pt_poly,
-            &pk,
-            &mut rng,
+            &pt_poly, &pk, &mut rng,
         );
         let expected_len = postcard::to_allocvec(&ct_obj).unwrap().len();
         let rc = tfhe_pk_encrypt(
@@ -529,7 +530,8 @@ mod tests {
         assert_eq!(rc2, BATTERY_ERR_BUFSZ);
         // Strict: compute expected length by locally generating the bundle
         // Rebuild args
-        let parsed_args: OpaqueMerklePathArgs = postcard::from_bytes(&args_buf[..args_len]).unwrap();
+        let parsed_args: OpaqueMerklePathArgs =
+            postcard::from_bytes(&args_buf[..args_len]).unwrap();
         let levels_parent = parsed_args.neighbors8_by_level_u32.len();
         let mut leaf = [Val::from_canonical_checked(0).unwrap(); 8];
         let mut sibling = [Val::from_canonical_checked(0).unwrap(); 8];
@@ -541,7 +543,9 @@ mod tests {
         neighbors.push((sibling, false));
         for (lvl, neigh) in parsed_args.neighbors8_by_level_u32.iter().enumerate() {
             let mut arr = [Val::from_canonical_checked(0).unwrap(); 8];
-            for j in 0..8 { arr[j] = Val::from_canonical_checked(neigh[j]).unwrap(); }
+            for j in 0..8 {
+                arr[j] = Val::from_canonical_checked(neigh[j]).unwrap();
+            }
             let side = parsed_args.sides_bitflags[lvl];
             let is_left = side == 1;
             neighbors.push((arr, is_left));
@@ -598,7 +602,8 @@ mod tests {
         assert_eq!(rc2, BATTERY_OK);
         assert!(written > 0);
         // Strict: recompute expected bundle and compare exact bytes and length
-        let parsed_args: OpaqueMerklePathArgs = postcard::from_bytes(&args_buf[..args_len]).unwrap();
+        let parsed_args: OpaqueMerklePathArgs =
+            postcard::from_bytes(&args_buf[..args_len]).unwrap();
         let levels_parent = parsed_args.neighbors8_by_level_u32.len();
         let mut leaf = [Val::from_canonical_checked(0).unwrap(); 8];
         let mut sibling = [Val::from_canonical_checked(0).unwrap(); 8];
@@ -610,14 +615,17 @@ mod tests {
         neighbors.push((sibling, false));
         for (lvl, neigh) in parsed_args.neighbors8_by_level_u32.iter().enumerate() {
             let mut arr = [Val::from_canonical_checked(0).unwrap(); 8];
-            for j in 0..8 { arr[j] = Val::from_canonical_checked(neigh[j]).unwrap(); }
+            for j in 0..8 {
+                arr[j] = Val::from_canonical_checked(neigh[j]).unwrap();
+            }
             let side = parsed_args.sides_bitflags[lvl];
             let is_left = side == 1;
             neighbors.push((arr, is_left));
         }
         let mut nonce_arr = [0u8; BATTERY_NONCE_LEN];
         nonce_arr.copy_from_slice(&nonce);
-        let (proof_expected, public_values_expected) = crate::zkp::generate_proof(&leaf, &neighbors, &nonce_arr);
+        let (proof_expected, public_values_expected) =
+            crate::zkp::generate_proof(&leaf, &neighbors, &nonce_arr);
         let expected_bundle = ZkpProofBundle(proof_expected, public_values_expected);
         let expected_bytes = postcard::to_allocvec(&expected_bundle).unwrap();
         assert_eq!(written, expected_bytes.len());

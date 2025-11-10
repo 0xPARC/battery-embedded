@@ -15,7 +15,11 @@
 
 #define HASH_SIZE 8
 
-#define TFHE_TRLWE_N (1 << 10)
+#define TFHE_TRLWE_N (1 << 9)
+
+#define Q (1 << 50)
+
+#define ERR_B 250
 
 #define BATTERY_OK 0
 
