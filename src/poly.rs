@@ -126,21 +126,42 @@ impl<const N: usize, const Q: u64> Poly<N, Q> {
     }
 
     // Negacyclic convolution modulo X^N + 1 in Z/QZ: c = a * b (mod X^N + 1, Q)
+    // Branchless inner loop by splitting no-wrap/wrap regions.
     #[inline]
     pub fn mul_negacyclic(&self, other: &Self) -> Self {
         const { assert!(N.is_power_of_two()) }; // power of two
         let mut out = [0u64; N];
-        let m = N - 1;
         for i in 0..N {
             let ai = self.coeffs[i];
-            for j in 0..N {
-                let sum = i + j;
-                let k = sum & m;
-                if sum < N {
-                    out[k] = add_mod::<Q>(out[k], mul_mod::<Q>(ai, other.coeffs[j]));
-                } else {
-                    out[k] = sub_mod::<Q>(out[k], mul_mod::<Q>(ai, other.coeffs[j]));
-                }
+            let limit = N - i; // first region: no wrap
+            // out[i + j] += ai * other[j] for j in 0..limit
+            for j in 0..limit {
+                out[i + j] = add_mod::<Q>(out[i + j], mul_mod::<Q>(ai, other.coeffs[j]));
+            }
+            // out[i + j - N] -= ai * other[j] for j in limit..N
+            for j in limit..N {
+                out[i + j - N] = sub_mod::<Q>(out[i + j - N], mul_mod::<Q>(ai, other.coeffs[j]));
+            }
+        }
+        Poly { coeffs: out }
+    }
+
+    /// Fast-path negacyclic multiply by a binary polynomial (coeffs in {0,1}).
+    /// Avoids multiplications; performs rotate-and-add/sub when bin[i] == 1.
+    #[inline]
+    pub fn mul_negacyclic_by_binary(&self, bin: &Self) -> Self {
+        const { assert!(N.is_power_of_two()) };
+        let mut out = [0u64; N];
+        for i in 0..N {
+            if bin.coeffs[i] == 0 { continue; }
+            let limit = N - i;
+            // No-wrap region: out[i + j] += self[j]
+            for j in 0..limit {
+                out[i + j] = add_mod::<Q>(out[i + j], self.coeffs[j]);
+            }
+            // Wrap region: out[i + j - N] -= self[j]
+            for j in limit..N {
+                out[i + j - N] = sub_mod::<Q>(out[i + j - N], self.coeffs[j]);
             }
         }
         Poly { coeffs: out }
@@ -153,6 +174,16 @@ impl<const N: usize, const Q: u64> Poly<N, Q> {
         let mut out = [0u64; N];
         for i in 0..N {
             out[i] = rng.random_range(0..Q);
+        }
+        Poly { coeffs: out }
+    }
+
+    /// Sample coefficients independently from a binary {0,1} distribution.
+    #[inline]
+    pub fn binary<R: Rng>(rng: &mut R) -> Self {
+        let mut out = [0u64; N];
+        for i in 0..N {
+            out[i] = rng.random_range(0..2) as u64;
         }
         Poly { coeffs: out }
     }

@@ -49,9 +49,9 @@ impl<const N: usize, const Q: u64> TRLWECiphertext<N, Q> {
         pk: &TFHEPublicKey<N, Q>,
         rng: &mut R,
     ) -> Self {
-        let u = Poly::<N, Q>::error::<R, B>(rng);
-        let a_scaled = pk.a.mul_negacyclic(&u);
-        let b_scaled = pk.b.mul_negacyclic(&u);
+        let u = Poly::<N, Q>::binary(rng);
+        let a_scaled = pk.a.mul_negacyclic_by_binary(&u);
+        let b_scaled = pk.b.mul_negacyclic_by_binary(&u);
         let e1 = Poly::<N, Q>::error::<R, B>(rng);
         let e2 = Poly::<N, Q>::error::<R, B>(rng);
         // Fuse post-ops to minimize full-array passes

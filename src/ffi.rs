@@ -11,7 +11,7 @@ use rand::SeedableRng;
 use rand_chacha::ChaCha20Rng;
 
 // Public constants for FFI
-pub const TFHE_TRLWE_N: usize = 1 << 9;
+pub const TFHE_TRLWE_N: usize = 1 << 10;
 pub const Q: u64 = 1 << 50;
 pub const ERR_B: u64 = 250;
 
