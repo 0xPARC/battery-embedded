@@ -167,6 +167,25 @@ impl<const N: usize, const Q: u64> Poly<N, Q> {
         Poly { coeffs: out }
     }
 
+    /// In-place fused accumulate: self += a * bin (negacyclic), where bin is binary.
+    /// Useful to avoid temporaries when computing e.g. a*u + e.
+    #[inline]
+    pub fn addmul_negacyclic_by_binary_assign(&mut self, a: &Self, bin: &Self) {
+        const { assert!(N.is_power_of_two()) };
+        for i in 0..N {
+            if bin.coeffs[i] == 0 { continue; }
+            let limit = N - i;
+            // No-wrap region: self[i + j] += a[j]
+            for j in 0..limit {
+                self.coeffs[i + j] = add_mod::<Q>(self.coeffs[i + j], a.coeffs[j]);
+            }
+            // Wrap region: self[i + j - N] -= a[j]
+            for j in limit..N {
+                self.coeffs[i + j - N] = sub_mod::<Q>(self.coeffs[i + j - N], a.coeffs[j]);
+            }
+        }
+    }
+
     // Sampling
     #[inline]
     pub fn uniform<R: Rng>(rng: &mut R) -> Self {
